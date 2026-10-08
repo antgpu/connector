@@ -10,18 +10,22 @@ this helper into a private directory and checks a checksum embedded in the
 reviewed installer before executing it. The installer script itself remains an
 HTTPS bootstrap trust decision, as with the Linux installer.
 
-The initial immutable artifact is `installer-verifier-v1/connect-windows-amd64.exe`.
+The immutable artifact is `installer-verifier-v2/connect-windows-amd64.exe`.
 Build from this source with Go 1.27.1:
 
 ```sh
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -buildvcs=false -trimpath \
   -ldflags '-s -w -buildid=' \
-  -o dist/installer-verifier-v1/connect-windows-amd64.exe ./cmd/verify-update
-shasum -a 256 dist/installer-verifier-v1/connect-windows-amd64.exe
+  -o dist/installer-verifier-v2/connect-windows-amd64.exe ./cmd/verify-update
+shasum -a 256 dist/installer-verifier-v2/connect-windows-amd64.exe
 ```
 
-The reviewed initial SHA-256 is
-`b9eb77dc6c0da3b5da96ce032b28cd42bb67e5450de3e1eb4867e14c1310e003`.
+The reviewed SHA-256 is
+`7bf96f53327bec8283876982328ff6e577b2d27d68eac830a2501f0aa1687d9c`.
+Git metadata is excluded so the checksum does not depend on the checkout commit
+or dirty status. Version 1 was used only in the private rehearsal; its artifact
+remains immutable.
+
 Compare against `backend/scripts/connector/install_connect_win.ps1` before
 uploading to the configured connector artifact root. A different toolchain or
 source change requires a new immutable version and a reviewed installer pin;
