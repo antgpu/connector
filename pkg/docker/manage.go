@@ -43,7 +43,7 @@ func StartContainer(ctx context.Context, cli *client.Client, containerID string)
 	if err := ensureManagedContainer(ctx, cli, containerID); err != nil {
 		return err
 	}
-	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if err := startIsolatedWorkload(ctx, cli, containerID); err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
 
@@ -59,6 +59,9 @@ func RestartContainer(ctx context.Context, cli *client.Client, containerID strin
 	if timeout != nil {
 		sec := int(timeout.Seconds())
 		restartTimeout = &sec
+	}
+	if err := prepareWorkloadStart(ctx, cli, containerID); err != nil {
+		return err
 	}
 	if err := cli.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: restartTimeout}); err != nil {
 		return fmt.Errorf("failed to restart container: %w", err)
@@ -245,6 +248,9 @@ func PauseContainer(ctx context.Context, cli *client.Client, containerID string)
 // ResumeContainer возобновляет выполнение приостановленного контейнера
 func ResumeContainer(ctx context.Context, cli *client.Client, containerID string) error {
 	if err := ensureManagedContainer(ctx, cli, containerID); err != nil {
+		return err
+	}
+	if err := prepareWorkloadStart(ctx, cli, containerID); err != nil {
 		return err
 	}
 	if err := cli.ContainerUnpause(ctx, containerID); err != nil {
@@ -462,4 +468,11 @@ func ensureManagedContainer(ctx context.Context, cli *client.Client, containerID
 		return fmt.Errorf("container %s is not managed by this application", containerID)
 	}
 	return nil
+}
+
+func startIsolatedWorkload(ctx context.Context, cli *client.Client, id string) error {
+	if err := prepareWorkloadStart(ctx, cli, id); err != nil {
+		return err
+	}
+	return cli.ContainerStart(ctx, id, container.StartOptions{})
 }

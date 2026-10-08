@@ -6,9 +6,9 @@ hardware and health, and manages rented Docker workloads.
 This private repository is being prepared for release. Project code is licensed
 under [MIT](LICENSE); third-party components retain their respective licenses.
 Public documentation and the third-party notice inventory are pending. Windows
-startup, installer, permissions, and updates are tested separately. Public Windows
-rental support remains blocked on Docker Desktop workload network isolation;
-the publishing workflow still builds Linux releases only.
+startup, installer, permissions, updates, and Docker Desktop workload isolation
+are tested separately. The publishing workflow still builds Linux releases only;
+public Windows support requires a separately approved release.
 
 ## Build and run
 
@@ -16,7 +16,8 @@ Requires Go 1.26 or newer. Linux workload provisioning requires root, the local
 Docker socket `/var/run/docker.sock` and Docker's iptables backend. Any Docker
 storage driver may be used. Writable-layer quotas are applied where supported;
 other setups, including containerd overlayfs on ext4, use soft storage enforcement.
-On Linux, unsupported network or resource isolation refuses provisioning.
+Unsupported network or resource isolation refuses provisioning on Linux and
+Windows Docker Desktop; native Windows containers and other hosts are unsupported.
 Previously created containers must be drained and recreated to acquire these
 limits and the managed network. Image-declared volumes and pulled image layers
 are outside writable-layer quotas. Storage telemetry reports the enforcement
@@ -36,8 +37,9 @@ API and separate enrollment state. Keep `.auth`, tunnel configuration, logs,
 and `cache/` private. Run from a trusted, non-writable directory when omitting
 `--state-dir`.
 
-Rented containers publish on loopback. On Linux, a managed bridge blocks new connections
-to the provider host, private networks, and cloud metadata addresses; public
+Rented containers publish on loopback. A managed bridge on Linux and Windows
+Docker Desktop blocks new connections to the provider host, private networks,
+and cloud metadata addresses; public
 egress and replies to inbound connections remain available. Containers have
 memory, CPU, PID, and log limits, plus writable-layer quotas where supported.
 An unspecified hard disk quota defaults to 8 GiB. Docker is a shared-kernel boundary; it does not guarantee
@@ -109,3 +111,10 @@ The Windows installer uses an immutable, checksum-pinned
 manifest as the updater. Upload that exact verifier artifact before deploying the
 new PowerShell installer. No verifier checksum or public-key override is accepted.
 This extra bootstrap artifact is independent of routine connector version updates.
+
+
+Windows workload isolation uses a short-lived, digest-pinned helper inside Docker
+Desktop's Linux VM, with only NET_ADMIN and no host mounts or Docker socket. The
+connector rechecks policy before start, restart, and resume; rentals cannot
+automatically restart outside that gate. See [Windows workload isolation](docs/windows-workload-isolation.md)
+for prerequisites, lifecycle, and validation.

@@ -345,7 +345,7 @@ func LaunchContainerWithOptions(ctx context.Context, t docker.Template, onProgre
 	}
 
 	// 12. Запуск контейнера
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if err := startIsolatedWorkload(ctx, cli, resp.ID); err != nil {
 		_ = cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true, RemoveVolumes: true})
 		// В случае ошибки запуска удаляем скрипт
 		if scriptHostPath != "" {

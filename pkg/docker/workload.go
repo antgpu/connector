@@ -26,7 +26,10 @@ func configureWorkload(ctx context.Context, cli *client.Client, host *container.
 	if info.MemTotal < 512<<20 || info.NCPU < 1 {
 		return fmt.Errorf("Docker host capacity is unavailable or insufficient")
 	}
-	if runtime.GOOS == "linux" && (!info.MemoryLimit || !info.SwapLimit || !info.PidsLimit || !info.CPUCfsQuota || !info.CPUCfsPeriod) {
+	if info.OSType != "linux" {
+		return fmt.Errorf("workloads require Docker Linux containers")
+	}
+	if !info.MemoryLimit || !info.SwapLimit || !info.PidsLimit || !info.CPUCfsQuota || !info.CPUCfsPeriod {
 		return fmt.Errorf("Docker host cannot enforce required memory, swap, PID, and CPU limits")
 	}
 	reserve := info.MemTotal / 10
@@ -46,24 +49,19 @@ func configureWorkload(ctx context.Context, cli *client.Client, host *container.
 	host.CapDrop = []string{"NET_RAW"}
 	host.SecurityOpt = []string{"no-new-privileges:true"}
 	host.LogConfig = container.LogConfig{Type: "local", Config: map[string]string{"max-size": "10m", "max-file": "3"}}
-	if runtime.GOOS != "linux" {
-		return nil
-	}
 	if err := ensureWorkloadNetwork(ctx, cli); err != nil {
 		return err
 	}
 	host.NetworkMode = container.NetworkMode(workloadNetwork)
-	host.Sysctls = map[string]string{"net.ipv6.conf.all.disable_ipv6": "1"}
+	host.Sysctls = map[string]string{"net.ipv6.conf.all.disable_ipv6": "1", "net.ipv6.conf.default.disable_ipv6": "1"}
 	return nil
 }
 
 func ensureWorkloadNetwork(ctx context.Context, cli *client.Client) error {
 	workloadNetworkMu.Lock()
 	defer workloadNetworkMu.Unlock()
-	// Firewall commands must run on the Docker host, never against a remote
-	// daemon while accidentally changing the connector host's firewall.
-	if cli.DaemonHost() != "unix:///var/run/docker.sock" {
-		return fmt.Errorf("isolated workloads require the local Linux Docker socket /var/run/docker.sock")
+	if err := validateWorkloadDaemon(cli); err != nil {
+		return err
 	}
 	options := map[string]string{"com.docker.network.bridge.name": workloadBridge, "com.docker.network.bridge.enable_icc": "false"}
 	existing, err := cli.NetworkInspect(ctx, workloadNetwork, network.InspectOptions{})
@@ -76,15 +74,16 @@ func ensureWorkloadNetwork(ctx context.Context, cli *client.Client) error {
 				return fmt.Errorf("unsafe workload network option %s", key)
 			}
 		}
-		return installWorkloadFirewall(ctx)
+		return installWorkloadFirewall(ctx, cli)
 	}
 	if !errdefs.IsNotFound(err) {
 		return fmt.Errorf("inspect workload network: %w", err)
 	}
-	if err := installWorkloadFirewall(ctx); err != nil {
+	if err := installWorkloadFirewall(ctx, cli); err != nil {
 		return err
 	}
-	_, err = cli.NetworkCreate(ctx, workloadNetwork, network.CreateOptions{Driver: "bridge", Options: options, Labels: map[string]string{"antgpu.network": "workloads"}})
+	ipv6 := false
+	_, err = cli.NetworkCreate(ctx, workloadNetwork, network.CreateOptions{Driver: "bridge", EnableIPv6: &ipv6, Options: options, Labels: map[string]string{"antgpu.network": "workloads"}})
 	if err != nil {
 		return fmt.Errorf("create isolated workload network: %w", err)
 	}
@@ -112,4 +111,20 @@ func configureWorkloadStorage(ctx context.Context, cli *client.Client, host *con
 	}
 	host.StorageOpt["size"] = fmt.Sprintf("%dm", diskMB)
 	return nil
+}
+
+// Reapply policy at the last start boundary, including after image pulls and
+// Docker Desktop restarts. Automatic container restart must not bypass this gate.
+func prepareWorkloadStart(ctx context.Context, cli *client.Client, id string) error {
+	info, err := cli.ContainerInspect(ctx, id)
+	if err != nil {
+		return fmt.Errorf("inspect workload isolation: %w", err)
+	}
+	if info.HostConfig == nil || info.HostConfig.NetworkMode != container.NetworkMode(workloadNetwork) || info.HostConfig.Sysctls["net.ipv6.conf.all.disable_ipv6"] != "1" {
+		return fmt.Errorf("legacy or incompatible workload networking; recreate this rental before starting")
+	}
+	if policy := info.HostConfig.RestartPolicy.Name; policy != "" && policy != "no" {
+		return fmt.Errorf("automatic workload restart bypasses network isolation checks; recreate this rental")
+	}
+	return ensureWorkloadNetwork(ctx, cli)
 }
