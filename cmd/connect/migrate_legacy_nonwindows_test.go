@@ -7,8 +7,22 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 )
+
+func TestMigrationRejectsServiceInterpretersAndOtherGoPrograms(t *testing.T) {
+	for _, info := range []*debug.BuildInfo{nil, {Path: "cmd/env"}, {Path: "example.com/wrapper", Main: debug.Module{Path: "example.com/wrapper"}}, {Path: "github.com/antgpu/connector/cmd/other", Main: debug.Module{Path: "github.com/antgpu/connector"}}} {
+		if isConnectorBuild(info) {
+			t.Fatal("accepted an unrelated service target")
+		}
+	}
+	for _, module := range []string{"github.com/antgpu/connect", "github.com/antgpu/connector"} {
+		if !isConnectorBuild(&debug.BuildInfo{Path: module + "/cmd/connect", Main: debug.Module{Path: module}}) {
+			t.Fatal("rejected connector target")
+		}
+	}
+}
 
 func TestServiceExecutableLegacyLayouts(t *testing.T) {
 	for _, tc := range []struct {

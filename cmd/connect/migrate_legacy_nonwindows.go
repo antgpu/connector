@@ -8,10 +8,19 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 
 	"github.com/antgpu/connector/internal/securefs"
 )
+
+func isConnectorBuild(info *debug.BuildInfo) bool {
+	if info == nil {
+		return false
+	}
+	return (info.Main.Path == "github.com/antgpu/connect" && info.Path == "github.com/antgpu/connect/cmd/connect") ||
+		(info.Main.Path == "github.com/antgpu/connector" && info.Path == "github.com/antgpu/connector/cmd/connect")
+}
 
 func isLegacyCachedExecutable(executable, tempDir, version, arch string) bool {
 	return executable == filepath.Join(tempDir, ".antgpu", "connect-cache", version, "linux-"+arch, "connect")

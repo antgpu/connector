@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"debug/buildinfo"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/antgpu/connector/internal/securefs"
 	"github.com/antgpu/connector/internal/updater"
 	"github.com/godbus/dbus/v5"
 )
@@ -98,5 +100,18 @@ func installedBinaryPath() (string, error) {
 	if err := dbus.Store([]interface{}{serviceProps["ExecStart"].Value()}, &commands); err != nil || len(commands) != 1 {
 		return "", fmt.Errorf("expected one connector service ExecStart command")
 	}
-	return serviceExecutable(commands[0].Path, commands[0].Args)
+	target, err := serviceExecutable(commands[0].Path, commands[0].Args)
+	if err != nil {
+		return "", err
+	}
+	// An ExecStart program such as /usr/bin/env or a custom interpreter may exec
+	// the connector as its main PID. Never replace that wrapper/interpreter.
+	if err := securefs.RegularFile(target); err != nil {
+		return "", err
+	}
+	info, err := buildinfo.ReadFile(target)
+	if err != nil || !isConnectorBuild(info) {
+		return "", fmt.Errorf("service target is not a recognized Go connector executable; rerun the state-preserving installer")
+	}
+	return target, nil
 }
