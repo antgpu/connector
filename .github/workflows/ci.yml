@@ -1,0 +1,47 @@
+name: Connector CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.x'
+      - run: go test ./...
+      - run: go vet ./...
+      - name: Verify isolation in disposable Linux Docker
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test -c -o /tmp/connector-isolation.test ./pkg/docker
+          docker run --privileged -d --name connector-isolation-ci \
+            docker:29.5.2-dind@sha256:6b9cd914eb9c6b342c040a49a27a5eb3804453bae6ecc90f7ff96133595a95e8 \
+            dockerd --storage-driver=vfs --host=unix:///var/run/docker.sock
+          trap 'docker rm -fv connector-isolation-ci >/dev/null' EXIT
+          ready=false
+          for attempt in $(seq 1 60); do
+            if docker exec connector-isolation-ci docker info >/dev/null 2>&1; then ready=true; break; fi
+            sleep 1
+          done
+          [[ "$ready" == true ]] || { docker logs connector-isolation-ci; exit 1; }
+          docker exec connector-isolation-ci docker pull busybox:1.37.0
+          docker cp /tmp/connector-isolation.test connector-isolation-ci:/isolation.test
+          docker exec -e RUN_ISOLATION_INTEGRATION=1 connector-isolation-ci \
+            /isolation.test -test.run '^TestWorkloadIsolationIntegration$' -test.v
+      - name: Check dependencies
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          python3 scripts/check-vulnerabilities.py
+      - name: Compile Linux release targets
+        run: bash scripts/build-release "ci-${GITHUB_SHA:0:12}"

@@ -1,0 +1,87 @@
+name: Publish Active Connector Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version
+        required: true
+        type: string
+      confirm:
+        description: Type publish-active-update to activate this version for the fleet
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: connector-production-release
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  publish:
+    if: github.ref == 'refs/heads/master' && inputs.confirm == 'publish-active-update'
+    needs: checks
+    runs-on: ubuntu-latest
+    environment: connector-production
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.x'
+      - name: Require configured environment reviewers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          reviewers="$(gh api "repos/$REPOSITORY/environments/connector-production" --jq '[.protection_rules[] | select(.type == "required_reviewers") | .reviewers[]] | length')"
+          [[ "$reviewers" -gt 0 ]] || { echo "connector-production must have required reviewers" >&2; exit 1; }
+      - name: Build reviewed Linux binaries
+        run: bash scripts/build-release "$VERSION"
+      - name: Sign update manifest
+        env:
+          CONNECTOR_SIGNING_KEY: ${{ secrets.CONNECTOR_SIGNING_KEY }}
+          PUBLIC_BASE: ${{ vars.ANTGPU_PUBLIC_BASE_URL || 'https://api.antgpu.ai' }}
+        run: go run ./cmd/release-manifest -version "$VERSION" -base-url "$PUBLIC_BASE"
+      - name: Upload and activate signed manifest
+        env:
+          BACKEND_HOST: ${{ secrets.BACKEND_HOST }}
+          BACKEND_SSH_PORT: ${{ secrets.BACKEND_SSH_PORT }}
+          BACKEND_SSH_USER: ${{ secrets.BACKEND_SSH_USER }}
+          BACKEND_SSH_PRIVATE_KEY: ${{ secrets.BACKEND_SSH_PRIVATE_KEY }}
+          BACKEND_SSH_KNOWN_HOSTS: ${{ secrets.BACKEND_SSH_KNOWN_HOSTS }}
+          CONNECT_ARTIFACTS_TOKEN: ${{ secrets.CONNECT_ARTIFACTS_TOKEN }}
+          STATIC_ROOT: ${{ vars.ANTGPU_CONNECTOR_STATIC_DIR }}
+          API_BASE: ${{ vars.ANTGPU_API_BASE_URL || 'https://api.antgpu.ai' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in BACKEND_HOST BACKEND_SSH_USER BACKEND_SSH_PRIVATE_KEY BACKEND_SSH_KNOWN_HOSTS CONNECT_ARTIFACTS_TOKEN STATIC_ROOT; do
+            [[ -n "${!key:-}" ]] || { echo "missing required setting: $key" >&2; exit 1; }
+          done
+          [[ "$BACKEND_HOST" =~ ^[A-Za-z0-9.-]+$ && "$BACKEND_SSH_USER" =~ ^[A-Za-z0-9_-]+$ ]] || exit 1
+          [[ "${BACKEND_SSH_PORT:-22}" =~ ^[0-9]+$ && "$STATIC_ROOT" =~ ^/[A-Za-z0-9/_.-]+$ ]] || exit 1
+          [[ "$API_BASE" == https://* ]] || exit 1
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$BACKEND_SSH_PRIVATE_KEY" > ~/.ssh/id_backend
+          printf '%s\n' "$BACKEND_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_backend ~/.ssh/known_hosts
+          trap 'rm -f ~/.ssh/id_backend' EXIT
+          target="$BACKEND_SSH_USER@$BACKEND_HOST"
+          remote="${STATIC_ROOT%/}/$VERSION"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_backend -p "${BACKEND_SSH_PORT:-22}" "$target" "mkdir '$remote'"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_backend -P "${BACKEND_SSH_PORT:-22}" \
+            "dist/$VERSION/connect-linux-amd64" "dist/$VERSION/connect-linux-arm64" "$target:$remote/"
+          curl --proto '=https' --fail --show-error --silent --connect-timeout 10 --max-time 60 \
+            -X POST "${API_BASE%/}/internal/connect/connector/manifest?activate=true" \
+            -H "Authorization: Bearer $CONNECT_ARTIFACTS_TOKEN" -H 'Content-Type: application/json' \
+            --data-binary "@dist/$VERSION/connector-manifest.json"
+          echo "Activated signed connector version $VERSION" >> "$GITHUB_STEP_SUMMARY"
