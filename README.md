@@ -64,6 +64,10 @@ SSH host keys. Configure required environment reviewers and branch/workflow
 protection before public release; declaring an environment alone adds no review
 requirement. No production credentials have been transferred to this repository.
 
+The proposed [maintainer policy](.github/REPOSITORY_POLICY.md) permits direct
+`master` pushes by `@mintyleaf`, with CI afterward. Other contributions require
+a reviewed PR and passing checks. Publishing stays a separate manual action.
+
 Before activating signed releases, deploy the backend change that preserves the
 manifest `signature` field. Existing connectors do not acquire signature
 verification until their binaries are replaced; this is a coordinated migration.
