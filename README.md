@@ -3,9 +3,10 @@
 The provider agent enrolls a machine with AntGPU, establishes its tunnel, reports
 hardware and health, and manages rented Docker workloads.
 
-This private repository is being prepared for release. Public documentation and
-licensing are pending. Windows source is retained, but Windows releases and
-validation are deferred.
+This private repository is being prepared for release. Project code is licensed
+under [MIT](LICENSE); third-party components retain their respective licenses.
+Public documentation and the third-party notice inventory are pending. Windows
+source is retained, but Windows releases and validation are deferred.
 
 ## Build and run
 
