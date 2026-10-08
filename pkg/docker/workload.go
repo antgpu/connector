@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"log"
 	"runtime"
 	"sync"
 
@@ -96,13 +97,18 @@ func configureWorkloadStorage(ctx context.Context, cli *client.Client, host *con
 	}
 	warning, err := CheckStorageOptsSupport(ctx, cli)
 	if err != nil {
-		return fmt.Errorf("verify workload disk quota support: %w", err)
+		log.Printf("workload storage uses soft enforcement: cannot verify writable-layer quotas: %v", err)
+		return nil
 	}
 	if warning != "" {
-		return fmt.Errorf("workload disk quotas are required: %s", warning)
+		log.Printf("workload storage uses soft enforcement: %s", warning)
+		return nil
 	}
 	if diskMB <= 0 {
 		diskMB = 8 * 1024
+	}
+	if host.StorageOpt == nil {
+		host.StorageOpt = make(map[string]string)
 	}
 	host.StorageOpt["size"] = fmt.Sprintf("%dm", diskMB)
 	return nil

@@ -15,8 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	protocol "github.com/antgpu/connector-protocol"
 	"github.com/antgpu/connector/internal/securefs"
-	"github.com/antgpu/connector/pkg/protocol"
 )
 
 func main() {

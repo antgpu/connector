@@ -13,8 +13,8 @@ import (
 	"strings"
 	"unicode"
 
+	docker "github.com/antgpu/connector-protocol"
 	"github.com/antgpu/connector/internal/securefs"
-	docker "github.com/antgpu/connector/pkg/protocol"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/registry"
@@ -201,10 +201,6 @@ func LaunchContainerWithOptions(ctx context.Context, t docker.Template, onProgre
 			return "", err
 		}
 	}
-	if err := ensureBoundedImage(ctx, cli, imageName); err != nil {
-		return "", err
-	}
-
 	labels["template-name"] = t.TemplateName
 	labels["managed-by"] = "template-manager"
 	labels["antgpu.image_ref"] = imageName
@@ -340,20 +336,6 @@ func LaunchContainerWithOptions(ctx context.Context, t docker.Template, onProgre
 
 	fmt.Printf("Container %s started with ID %s\n", t.TemplateName, resp.ID)
 	return resp.ID, nil
-}
-
-func ensureBoundedImage(ctx context.Context, cli *client.Client, name string) error {
-	info, err := cli.ImageInspect(ctx, name)
-	if err != nil {
-		return fmt.Errorf("inspect workload image: %w", err)
-	}
-	// Docker automatically creates writable anonymous volumes declared by an
-	// image. They bypass storage-opts size, so reject them until bounded volume
-	// storage has its own lifecycle and quota implementation.
-	if info.Config != nil && len(info.Config.Volumes) > 0 {
-		return fmt.Errorf("workload image declares volumes that bypass disk quotas; bounded volumes are not supported")
-	}
-	return nil
 }
 
 // configureGPU gives GPU-required templates access to every NVIDIA GPU exposed

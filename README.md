@@ -10,13 +10,16 @@ validation are deferred.
 ## Build and run
 
 Requires Go 1.26 or newer. Linux workload provisioning requires root, the local
-Docker socket `/var/run/docker.sock`, Docker's iptables backend, and a storage
-driver with writable-layer quotas. With overlay2, use XFS with project quotas
-(`pquota` or `prjquota`). Unsupported isolation or quotas refuse provisioning.
+Docker socket `/var/run/docker.sock` and Docker's iptables backend. Any Docker
+storage driver may be used. Writable-layer quotas are applied where supported;
+other setups, including containerd overlayfs on ext4, use soft storage enforcement.
+Unsupported network or resource isolation still refuses provisioning.
 Previously created containers must be drained and recreated to acquire these
-limits and the managed network. Images declaring writable volumes are refused
-because those volumes bypass layer quotas. Pulled image layers are outside these
-quotas; use a separate, capacity-controlled Docker data filesystem.
+limits and the managed network. Image-declared volumes and pulled image layers
+are outside writable-layer quotas. Storage telemetry reports the enforcement
+mode to the backend, which handles reservations, usage monitoring, and stopping
+rents at the host safety floor or after sustained excess usage. Soft enforcement
+is periodic and cannot prevent a fast write from exhausting disk space.
 NVIDIA workloads also require the NVIDIA driver and Container Toolkit.
 
 ```sh
@@ -33,13 +36,14 @@ and `cache/` private. Run from a trusted, non-writable directory when omitting
 Rented containers publish on loopback. A managed bridge blocks new connections
 to the provider host, private networks, and cloud metadata addresses; public
 egress and replies to inbound connections remain available. Containers have
-memory, CPU, PID, writable-layer, and log limits. An unspecified disk limit
-defaults to 8 GiB. Docker is a shared-kernel boundary; it does not guarantee
+memory, CPU, PID, and log limits, plus writable-layer quotas where supported.
+An unspecified hard disk quota defaults to 8 GiB. Docker is a shared-kernel boundary; it does not guarantee
 isolation against kernel or GPU-driver vulnerabilities.
 
 ## Dependencies and updates
 
-`pkg/protocol` contains the dependency-free wire types. Building this repository
+The public `github.com/antgpu/connector-protocol` module contains the dependency-free
+wire types shared with the backend. Building this repository
 does not require access to the private backend. The pinned public tunnel/Nebula
 fork remains in use to preserve its port-forwarding extensions. Nebula's optional
 diagnostic SSH server is disabled.

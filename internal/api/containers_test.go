@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	backendDocker "github.com/antgpu/connector/pkg/protocol"
+	backendDocker "github.com/antgpu/connector-protocol"
 )
 
 func TestFetchTemplateByID_ForwardsUserIDHeader(t *testing.T) {

@@ -38,6 +38,13 @@ func TestWorkloadIsolationIntegration(t *testing.T) {
 	if err := configureWorkload(ctx, cli, host); err != nil {
 		t.Fatal(err)
 	}
+	if err := configureWorkloadStorage(ctx, cli, host, 1024); err != nil {
+		t.Fatal(err)
+	}
+	warning, quotaErr := CheckStorageOptsSupport(ctx, cli)
+	if (warning != "" || quotaErr != nil) && host.StorageOpt["size"] != "" {
+		t.Fatal("unsupported storage driver received a size option")
+	}
 	if host.Memory <= 0 || host.MemorySwap != host.Memory || host.NanoCPUs <= 0 || host.PidsLimit == nil || *host.PidsLimit != 1024 {
 		t.Fatalf("unbounded resources: %#v", host.Resources)
 	}
@@ -130,16 +137,20 @@ func TestWorkloadIsolationIntegration(t *testing.T) {
 	if _, err := containerCommand(ctx, cli, created.ID, []string{"wget", "-T", "2", "-qO-", lanURL}); err == nil {
 		t.Fatal("workload reached private LAN service")
 	}
-	if err := ensureBoundedImage(ctx, cli, "busybox:1.37.0"); err != nil {
-		t.Fatal(err)
-	}
 	volumeImage, err := cli.ContainerCommit(ctx, lan.ID, container.CommitOptions{Changes: []string{"VOLUME /unbounded"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = cli.ImageRemove(context.Background(), volumeImage.ID, image.RemoveOptions{Force: true}) })
-	if err := ensureBoundedImage(ctx, cli, volumeImage.ID); err == nil {
-		t.Fatal("accepted image volumes that bypass writable-layer quotas")
+	withVolume, err := cli.ContainerCreate(ctx, &container.Config{Image: volumeImage.ID, Cmd: []string{"sleep", "300"}}, host, nil, nil, "")
+	if err != nil {
+		t.Fatalf("image-declared volumes must remain compatible: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cli.ContainerRemove(context.Background(), withVolume.ID, container.RemoveOptions{Force: true, RemoveVolumes: true})
+	})
+	if err := cli.ContainerStart(ctx, withVolume.ID, container.StartOptions{}); err != nil {
+		t.Fatal(err)
 	}
 	if output, err := containerCommand(ctx, cli, created.ID, []string{"nslookup", "example.com"}); err != nil {
 		t.Fatalf("DNS blocked: %s %v", output, err)
@@ -147,15 +158,7 @@ func TestWorkloadIsolationIntegration(t *testing.T) {
 	if output, err := containerCommand(ctx, cli, created.ID, []string{"wget", "-T", "10", "-qO-", "http://example.com"}); err != nil {
 		t.Fatalf("public egress blocked: %s %v", output, err)
 	}
-	// This disposable host deliberately lacks disk quotas. Provisioning must
-	// refuse it before pulling an image or starting an unlimited container.
-	warning, quotaErr := CheckStorageOptsSupport(ctx, cli)
-	if warning != "" || quotaErr != nil {
-		if err := configureWorkloadStorage(ctx, cli, &container.HostConfig{StorageOpt: map[string]string{}}, 1024); err == nil {
-			t.Fatal("accepted host without disk quotas")
-		}
-	}
-	t.Log("loopback ingress and public egress pass; provider host and private LAN access blocked; hard limits applied; missing quotas rejected")
+	t.Log("loopback ingress and public egress pass; provider host and private LAN access blocked; resource limits applied; unsupported disk quotas use soft enforcement; image volumes supported")
 }
 
 func containerCommand(ctx context.Context, cli *client.Client, id string, command []string) (string, error) {

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
+	backendDocker "github.com/antgpu/connector-protocol"
 	internaldocker "github.com/antgpu/connector/internal/docker"
 	pkgdocker "github.com/antgpu/connector/pkg/docker"
-	backendDocker "github.com/antgpu/connector/pkg/protocol"
 	"github.com/google/uuid"
 	"github.com/swaggest/usecase/status"
 )

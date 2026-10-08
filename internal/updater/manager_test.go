@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antgpu/connector/pkg/protocol"
+	protocol "github.com/antgpu/connector-protocol"
 )
 
 func TestBinaryFilename(t *testing.T) {

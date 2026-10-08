@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/antgpu/connector/pkg/protocol"
+	protocol "github.com/antgpu/connector-protocol"
 )
 
 func reservedLabel(key string) bool {

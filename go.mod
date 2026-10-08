@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/NVIDIA/go-nvml v0.13.0-1
+	github.com/antgpu/connector-protocol v0.1.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/go-chi/chi/v5 v5.3.0

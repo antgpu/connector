@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/antgpu/connector/pkg/protocol"
+	protocol "github.com/antgpu/connector-protocol"
 )
 
 func TestTemplateCannotOverrideConnectorLabels(t *testing.T) {
