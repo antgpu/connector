@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	defaultFetchTimeout = 30 * time.Second
-	maxFetchBytes       = 256 * 1024 * 1024
+	defaultFetchTimeout  = 30 * time.Second
+	artifactFetchTimeout = 5 * time.Minute
+	maxFetchBytes        = 256 * 1024 * 1024
 )
 
 var artifactHTTPClient = &http.Client{
@@ -256,19 +257,39 @@ func (m *Manager) RequestUpdate(ctx context.Context, req Request) (Result, error
 		}
 	}
 
-	binaryPath, err := m.downloadAndCache(ctx, target, item)
-	if err != nil {
-		m.setLastError(err)
-		return Result{}, err
-	}
-
+	// Claim the update before network I/O: a backend notification and the
+	// local poller must not download/apply the same update concurrently.
 	m.mu.Lock()
+	if m.updating {
+		m.mu.Unlock()
+		return Result{Reason: "already_updating", Version: snap.Version, TargetVersion: target}, nil
+	}
 	m.updating = true
 	m.snapshot.State = string(StateUpdating)
 	m.snapshot.TargetVersion = target
 	m.snapshot.LastError = ""
 	m.snapshot.UpdatedAt = time.Now().UTC()
 	m.mu.Unlock()
+	binaryPath, err := m.downloadAndCache(ctx, target, item)
+	if err != nil {
+		m.setUpdateFailed(err)
+		return Result{}, err
+	}
+	// A rental may have started while the binary was downloading.
+	if m.hasRunningManagedContainers != nil {
+		running, err := m.hasRunningManagedContainers(ctx)
+		if err != nil {
+			m.setUpdateFailed(err)
+			return Result{}, err
+		}
+		if running {
+			m.mu.Lock()
+			m.updating = false
+			m.snapshot.State = string(StateConnected)
+			m.mu.Unlock()
+			return Result{Deferred: true, Reason: "active_rent", Version: snap.Version, TargetVersion: target, State: string(StateConnected)}, nil
+		}
+	}
 
 	go func() {
 		if err := verifyCachedArtifact(binaryPath, item.SHA256); err != nil {
@@ -381,6 +402,10 @@ func (m *Manager) downloadAndCache(ctx context.Context, version string, item man
 		return "", fmt.Errorf("update artifact must use HTTPS on the configured API host")
 	}
 	outPath := cachedBinaryPath(m.cacheRoot, version, runtime.GOOS, runtime.GOARCH)
+	outPath, err = filepath.Abs(outPath)
+	if err != nil {
+		return "", err
+	}
 	if err := securefs.PrivateDir(filepath.Dir(outPath)); err != nil {
 		return "", fmt.Errorf("create cache dir: %w", err)
 	}
@@ -398,7 +423,7 @@ func (m *Manager) downloadAndCache(ctx context.Context, version string, item man
 		return "", err
 	}
 	defer os.Remove(tmpPath)
-	reqCtx, cancel := context.WithTimeout(ctx, defaultFetchTimeout)
+	reqCtx, cancel := context.WithTimeout(ctx, artifactFetchTimeout)
 	defer cancel()
 	if err := downloadArtifact(reqCtx, artifactHTTPClient, item.URL, tmpPath, item.SHA256); err != nil {
 		return "", fmt.Errorf("download binary: %w", err)
@@ -407,7 +432,7 @@ func (m *Manager) downloadAndCache(ctx context.Context, version string, item man
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("commit binary cache: %w", err)
 	}
-	if err := os.Chmod(outPath, 0o500); err != nil {
+	if err := securefs.ExecutableFile(outPath); err != nil {
 		return "", fmt.Errorf("chmod binary: %w", err)
 	}
 

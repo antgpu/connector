@@ -233,7 +233,7 @@ func resolveDropbearFallbackBinary(ctx context.Context) (string, error) {
 		if err != nil {
 			continue
 		}
-		if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
 			continue
 		}
 		if err := securefs.RegularFile(path); err != nil {

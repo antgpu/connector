@@ -45,3 +45,19 @@ jobs:
           python3 scripts/check-vulnerabilities.py
       - name: Compile Linux release targets
         run: bash scripts/build-release "ci-${GITHUB_SHA:0:12}"
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.x'
+      - name: Test Windows startup, permissions, and updates
+        env:
+          CGO_ENABLED: '0'
+        run: go test ./...
+      - name: Check Windows code
+        env:
+          CGO_ENABLED: '0'
+        run: go vet ./...

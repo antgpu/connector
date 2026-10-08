@@ -9,13 +9,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	protocol "github.com/antgpu/connector-protocol"
 )
@@ -128,7 +132,7 @@ func TestArtifactRedirectRejectsCrossOriginAndDowngrade(t *testing.T) {
 
 func TestCachedBinaryPath_Windows(t *testing.T) {
 	got := cachedBinaryPath("C:/cache", "2026.05.24.1", "windows", "amd64")
-	want := "C:/cache/2026.05.24.1/windows-amd64/connect.exe"
+	want := filepath.Join("C:/cache", "2026.05.24.1", "windows-amd64", "connect.exe")
 	if got != want {
 		t.Fatalf("cachedBinaryPath windows=%q want %q", got, want)
 	}
@@ -136,7 +140,7 @@ func TestCachedBinaryPath_Windows(t *testing.T) {
 
 func TestCachedBinaryPath_Linux(t *testing.T) {
 	got := cachedBinaryPath("/tmp/cache", "2026.05.24.1", "linux", "amd64")
-	want := "/tmp/cache/2026.05.24.1/linux-amd64/connect"
+	want := filepath.Join("/tmp/cache", "2026.05.24.1", "linux-amd64", "connect")
 	if got != want {
 		t.Fatalf("cachedBinaryPath linux=%q want %q", got, want)
 	}
@@ -188,5 +192,103 @@ func TestDownloadArtifactRemovesInvalidFile(t *testing.T) {
 	}
 	if _, statErr := os.Stat(outPath); !os.IsNotExist(statErr) {
 		t.Fatalf("invalid artifact was not removed: %v", statErr)
+	}
+}
+
+type deadlineTransport struct {
+	base      http.RoundTripper
+	remaining chan time.Duration
+}
+
+func (d deadlineTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	end, _ := r.Context().Deadline()
+	d.remaining <- time.Until(end)
+	return d.base.RoundTrip(r)
+}
+
+func TestUpdateSerializesDownloadAndRechecksRent(t *testing.T) {
+	for _, rentStarts := range []bool{false, true} {
+		t.Run(fmt.Sprint("rent-starts-", rentStarts), func(t *testing.T) {
+			pub, key, _ := ed25519.GenerateKey(rand.Reader)
+			payload := []byte("signed test artifact")
+			sum := sha256.Sum256(payload)
+			started := make(chan struct{})
+			release := make(chan struct{})
+			var once sync.Once
+			var downloads atomic.Int32
+			var manifest protocol.UpdateManifest
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/manifest") {
+					_ = json.NewEncoder(w).Encode(manifest)
+					return
+				}
+				downloads.Add(1)
+				once.Do(func() { close(started) })
+				<-release
+				_, _ = w.Write(payload)
+			}))
+			defer server.Close()
+			manifest = protocol.UpdateManifest{Version: "next", Binaries: []protocol.UpdateArtifact{{OS: runtime.GOOS, Arch: runtime.GOARCH, URL: server.URL + "/binary", SHA256: hex.EncodeToString(sum[:])}}}
+			if err := protocol.SignUpdateManifest(&manifest, base64.StdEncoding.EncodeToString(key)); err != nil {
+				t.Fatal(err)
+			}
+			oldDefault, oldArtifact := http.DefaultClient, artifactHTTPClient
+			defer func() { http.DefaultClient = oldDefault; artifactHTTPClient = oldArtifact }()
+			http.DefaultClient = server.Client()
+			remaining := make(chan time.Duration, 1)
+			artifactHTTPClient = &http.Client{Transport: deadlineTransport{base: server.Client().Transport, remaining: remaining}}
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			applied := make(chan string, 1)
+			var rentChecks atomic.Int32
+			m := NewManager(ManagerConfig{APIAddr: server.URL, MachineToken: "test-only", Version: "old", PublicKey: base64.StdEncoding.EncodeToString(pub), CacheRoot: filepath.Join(root, "cache"), HasRunningManagedContainers: func(context.Context) (bool, error) { return rentChecks.Add(1) > 1 && rentStarts, nil }, RestartBinary: func(p string) error { applied <- p; return nil }})
+			type outcome struct {
+				result Result
+				err    error
+			}
+			done := make(chan outcome, 1)
+			go func() { result, err := m.RequestUpdate(context.Background(), Request{}); done <- outcome{result, err} }()
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				close(release)
+				t.Fatal("download did not start")
+			}
+			duplicate, err := m.RequestUpdate(context.Background(), Request{})
+			if err != nil || duplicate.Reason != "already_updating" {
+				close(release)
+				t.Fatalf("concurrent request: %v %v", duplicate, err)
+			}
+			if left := <-remaining; left < 4*time.Minute {
+				close(release)
+				t.Fatalf("artifact deadline too short: %s", left)
+			}
+			close(release)
+			result := <-done
+			if result.err != nil {
+				t.Fatal(result.err)
+			}
+			if downloads.Load() != 1 {
+				t.Fatalf("duplicate downloads: %d", downloads.Load())
+			}
+			if rentStarts {
+				if !result.result.Deferred || result.result.Reason != "active_rent" {
+					t.Fatalf("rent was interrupted: %+v", result.result)
+				}
+				select {
+				case <-applied:
+					t.Fatal("restarted during rent")
+				default:
+				}
+			} else {
+				select {
+				case <-applied:
+				case <-time.After(5 * time.Second):
+					t.Fatal("update did not apply")
+				}
+			}
+		})
 	}
 }

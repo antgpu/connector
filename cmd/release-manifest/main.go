@@ -24,13 +24,14 @@ func main() {
 	version := flag.String("version", "", "release version")
 	dist := flag.String("dist", "dist", "directory containing release binaries")
 	base := flag.String("base-url", "https://api.antgpu.ai", "artifact origin")
+	platforms := flag.String("platforms", "linux/amd64,linux/arm64", "comma-separated build platforms")
 	publicPath := flag.String("public-key", ".github/connector-update.pub", "reviewed public key")
 	flag.Parse()
 	var err error
 	if *keyDir != "" {
 		err = keygen(*keyDir)
 	} else {
-		err = sign(*version, *dist, *base, *publicPath)
+		err = sign(*version, *dist, *base, *publicPath, *platforms)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -66,7 +67,7 @@ func keygen(dir string) error {
 	return nil
 }
 
-func sign(version, dist, base, publicPath string) error {
+func sign(version, dist, base, publicPath, platforms string) error {
 	if err := securefs.ValidateVersion(version); err != nil {
 		return err
 	}
@@ -75,8 +76,19 @@ func sign(version, dist, base, publicPath string) error {
 		return err
 	}
 	manifest := protocol.UpdateManifest{Version: version}
-	for _, arch := range []string{"amd64", "arm64"} {
-		name := "connect-linux-" + arch
+	for _, platform := range strings.Split(platforms, ",") {
+		parts := strings.Split(platform, "/")
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid platform: %s", platform)
+		}
+		goos, arch := parts[0], parts[1]
+		if platform != "linux/amd64" && platform != "linux/arm64" && platform != "windows/amd64" {
+			return fmt.Errorf("unsupported platform: %s", platform)
+		}
+		name := "connect-" + goos + "-" + arch
+		if goos == "windows" {
+			name += ".exe"
+		}
 		file, err := os.Open(filepath.Join(dist, version, name))
 		if err != nil {
 			return err
@@ -90,7 +102,7 @@ func sign(version, dist, base, publicPath string) error {
 		if closeErr != nil {
 			return closeErr
 		}
-		manifest.Binaries = append(manifest.Binaries, protocol.UpdateArtifact{OS: "linux", Arch: arch, URL: strings.TrimRight(base, "/") + "/internal/connect/connector/bin/" + version + "/" + name, SHA256: hex.EncodeToString(hash.Sum(nil))})
+		manifest.Binaries = append(manifest.Binaries, protocol.UpdateArtifact{OS: goos, Arch: arch, URL: strings.TrimRight(base, "/") + "/internal/connect/connector/bin/" + version + "/" + name, SHA256: hex.EncodeToString(hash.Sum(nil))})
 	}
 	if err := protocol.SignUpdateManifest(&manifest, strings.TrimSpace(os.Getenv("CONNECTOR_SIGNING_KEY"))); err != nil {
 		return err

@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"strings"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -39,7 +38,11 @@ func clearPersistedServiceEnrollmentToken(opts runtimeOptions) error {
 		return nil
 	}
 
-	cfg.BinaryPathName = windowsServiceBinaryPath(serviceExecutablePath(cfg.BinaryPathName), windowsServiceRestartArgs(opts))
+	exe := serviceExecutablePath(cfg.BinaryPathName)
+	if exe == "" {
+		return fmt.Errorf("invalid service executable path")
+	}
+	cfg.BinaryPathName = windowsServiceBinaryPath(exe, windowsServiceRestartArgs(opts))
 	if err := s.UpdateConfig(cfg); err != nil {
 		return fmt.Errorf("update service %q binary path: %w", serviceName, err)
 	}
@@ -52,21 +55,9 @@ func serviceExecutablePath(binaryPath string) string {
 		return ""
 	}
 
-	cmdPtr, err := windows.UTF16PtrFromString(binaryPath)
-	if err != nil {
-		return binaryPath
+	args, err := windows.DecomposeCommandLine(binaryPath)
+	if err != nil || len(args) == 0 {
+		return ""
 	}
-
-	var argc int32
-	argv, err := windows.CommandLineToArgv(cmdPtr, &argc)
-	if err != nil || argc <= 0 {
-		return binaryPath
-	}
-	defer windows.LocalFree(windows.Handle(unsafe.Pointer(argv)))
-
-	args := (*[8192]*uint16)(unsafe.Pointer(argv))[:argc:argc]
-	if len(args) == 0 || args[0] == nil {
-		return binaryPath
-	}
-	return windows.UTF16PtrToString(args[0])
+	return args[0]
 }

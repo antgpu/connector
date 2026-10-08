@@ -1,0 +1,32 @@
+# Windows installer bootstrap verifier
+
+This small standalone helper verifies the connector-protocol Ed25519 manifest and
+returns only the selected Windows artifact metadata. It never installs services,
+enrolls a machine, or runs another binary. Its public-key pin must match
+`.github/connector-update.pub`; no command-line key override exists.
+
+PowerShell 5.1 has no native Ed25519 verification API. The installer downloads
+this helper into a private directory and checks a checksum embedded in the
+reviewed installer before executing it. The installer script itself remains an
+HTTPS bootstrap trust decision, as with the Linux installer.
+
+The initial immutable artifact is `installer-verifier-v1/connect-windows-amd64.exe`.
+Build from this source with Go 1.27.1:
+
+```sh
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+  -ldflags '-s -w -buildid=' \
+  -o dist/installer-verifier-v1/connect-windows-amd64.exe ./cmd/verify-update
+shasum -a 256 dist/installer-verifier-v1/connect-windows-amd64.exe
+```
+
+The reviewed initial SHA-256 is
+`b9eb77dc6c0da3b5da96ce032b28cd42bb67e5450de3e1eb4867e14c1310e003`.
+Compare against `backend/scripts/connector/install_connect_win.ps1` before
+uploading to the configured connector artifact root. A different toolchain or
+source change requires a new immutable version and a reviewed installer pin;
+never overwrite this artifact in place. The active connector manifest does not
+need to select the verifier as a connector update.
+
+Deploying the artifact/installer and publishing Windows releases remain separate,
+explicit release steps. The normal publishing workflow remains Linux-only.

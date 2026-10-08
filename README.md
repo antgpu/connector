@@ -6,7 +6,9 @@ hardware and health, and manages rented Docker workloads.
 This private repository is being prepared for release. Project code is licensed
 under [MIT](LICENSE); third-party components retain their respective licenses.
 Public documentation and the third-party notice inventory are pending. Windows
-source is retained, but Windows releases and validation are deferred.
+startup, installer, permissions, and updates are tested separately. Public Windows
+rental support remains blocked on Docker Desktop workload network isolation;
+the publishing workflow still builds Linux releases only.
 
 ## Build and run
 
@@ -14,7 +16,7 @@ Requires Go 1.26 or newer. Linux workload provisioning requires root, the local
 Docker socket `/var/run/docker.sock` and Docker's iptables backend. Any Docker
 storage driver may be used. Writable-layer quotas are applied where supported;
 other setups, including containerd overlayfs on ext4, use soft storage enforcement.
-Unsupported network or resource isolation still refuses provisioning.
+On Linux, unsupported network or resource isolation refuses provisioning.
 Previously created containers must be drained and recreated to acquire these
 limits and the managed network. Image-declared volumes and pulled image layers
 are outside writable-layer quotas. Storage telemetry reports the enforcement
@@ -34,7 +36,7 @@ API and separate enrollment state. Keep `.auth`, tunnel configuration, logs,
 and `cache/` private. Run from a trusted, non-writable directory when omitting
 `--state-dir`.
 
-Rented containers publish on loopback. A managed bridge blocks new connections
+Rented containers publish on loopback. On Linux, a managed bridge blocks new connections
 to the provider host, private networks, and cloud metadata addresses; public
 egress and replies to inbound connections remain available. Containers have
 memory, CPU, PID, and log limits, plus writable-layer quotas where supported.
@@ -54,7 +56,10 @@ binaries, `bash scripts/build-release VERSION` embeds the reviewed public key in
 `.github/connector-update.pub`. `cmd/release-manifest` signs binary checksums with
 the corresponding offline Ed25519 key supplied through `CONNECTOR_SIGNING_KEY`.
 Never commit the signing key. Clients verify the manifest signature and binary
-checksum before restarting.
+checksum before restarting. Artifact downloads allow five minutes; manifest
+checks retain a 30-second deadline. Concurrent downloads are serialized, rentals
+are checked again before replacement, and failed background polls back off to
+15 minutes.
 
 Pushes and pull requests run CI. The publishing workflow runs only by manual
 dispatch from `master`, after checks pass, with the exact confirmation
@@ -86,3 +91,21 @@ the new binary; an old executable cannot gain signature verification retroactive
 
 CI retains two explicit daemon-only vulnerability notices for the monolithic
 Docker client dependency; keep the provider's Docker engine patched separately.
+
+On Windows, service executables require protected local directories and ACLs that
+exclude write access by ordinary desktop tokens. State/cache credentials allow
+SYSTEM and Administrators only. The service uses transient SCM start arguments
+for first enrollment, and removes legacy persisted tokens after enrollment.
+Updates register an absolute executable path in the persistent private cache;
+a native helper waits for SCM to stop the old service before starting the new
+binary. The installer preserves enrollment by default; `-ResetState` makes a
+private backup, while `-Force` only suppresses prerequisite/choice prompts.
+Windows bootstrap scripts go through Docker's copy API, without granting Docker
+Desktop's file-sharing process access to private host state. Tray status remains
+unprivileged; private logs and service controls require an administrator.
+
+The Windows installer uses an immutable, checksum-pinned
+[bootstrap verifier](cmd/verify-update/README.md) to authenticate the same signed
+manifest as the updater. Upload that exact verifier artifact before deploying the
+new PowerShell installer. No verifier checksum or public-key override is accepted.
+This extra bootstrap artifact is independent of routine connector version updates.

@@ -431,7 +431,7 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 	if shouldRunAutoUpdater(opts) {
 		startManaged(&wg, errCh, "connector updater", func() error {
 			if opts.TestAutoUpdate {
-				updateCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
+				updateCtx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 				result, err := connectorUpdater.RequestUpdate(updateCtx, updater.Request{Force: true})
 				cancel()
 				if err != nil {
@@ -441,21 +441,28 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 				}
 			}
 
-			ticker := time.NewTicker(2 * time.Minute)
-			defer ticker.Stop()
+			delay := 2 * time.Minute
+			lastError := ""
 
 			for {
-				updateCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
+				updateCtx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 				_, err := connectorUpdater.Poll(updateCtx)
 				cancel()
 				if err != nil {
-					log.Printf("connector updater poll: %v", err)
+					if err.Error() != lastError {
+						log.Printf("connector updater poll: %v", err)
+					}
+					lastError = err.Error()
+				} else {
+					lastError = ""
 				}
-
+				delay = nextUpdaterPollDelay(delay, err != nil)
+				timer := time.NewTimer(delay)
 				select {
 				case <-ctx.Done():
+					timer.Stop()
 					return nil
-				case <-ticker.C:
+				case <-timer.C:
 				}
 			}
 		})
@@ -704,7 +711,7 @@ func runPreBenchmarkUpdateCheck(ctx context.Context, connectorUpdater *updater.M
 		return false
 	}
 
-	updateCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
+	updateCtx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 	result, err := connectorUpdater.RequestUpdate(updateCtx, updater.Request{Force: force})
 	cancel()
 	if err != nil {
@@ -943,4 +950,15 @@ func getMachineAuthData() (*api.MachineAuthData, error) {
 	}
 
 	return &machineAuthData, nil
+}
+
+func nextUpdaterPollDelay(previous time.Duration, failed bool) time.Duration {
+	if !failed {
+		return 2 * time.Minute
+	}
+	next := previous * 2
+	if next > 15*time.Minute {
+		next = 15 * time.Minute
+	}
+	return next
 }

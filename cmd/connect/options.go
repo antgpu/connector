@@ -25,6 +25,7 @@ type runtimeOptions struct {
 	ServiceStart     bool
 	ServiceStop      bool
 	ServiceRun       bool
+	ServiceRestart   bool
 }
 
 func parseRuntimeOptions(args []string) (runtimeOptions, error) {
@@ -39,6 +40,7 @@ func parseRuntimeOptions(args []string) (runtimeOptions, error) {
 	fs.BoolVar(&out.ServiceStart, "service-start", false, "start Windows service")
 	fs.BoolVar(&out.ServiceStop, "service-stop", false, "stop Windows service")
 	fs.BoolVar(&out.ServiceRun, "service-run", false, "internal: run under Windows Service Control Manager")
+	fs.BoolVar(&out.ServiceRestart, "service-restart", false, "internal: restart a stopped Windows service after update")
 	fs.StringVar(&out.StateDir, "state-dir", "", "connector state working directory")
 	fs.BoolVar(&out.ShowLogs, "show-logs", false, "internal: open tray log viewer on startup")
 	fs.BoolVar(&out.TestAutoUpdate, "test-auto-update", false, "force connector update check at startup (dev/testing)")

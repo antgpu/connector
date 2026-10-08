@@ -12,6 +12,12 @@ const dockerHubIndex = "https://index.docker.io/v1/"
 const templateScriptsDirEnv = "CONNECT_TEMPLATE_SCRIPTS_DIR"
 
 func prepareDockerCLIEnv(opts runtimeOptions) error {
+	if isWindowsTrayInvocation(opts) || opts.ServiceRestart {
+		return nil
+	}
+	if err := prepareDockerPlatformEnv(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(os.Getenv("DOCKER_CONFIG")) != "" {
 		return nil
 	}

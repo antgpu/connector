@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -224,7 +226,7 @@ func LaunchContainerWithOptions(ctx context.Context, t docker.Template, onProgre
 	var binds []string
 	var scriptHostPath string
 
-	if t.OnStartScript != "" {
+	if t.OnStartScript != "" && runtime.GOOS != "windows" {
 		scriptsDir := resolveTemplateScriptsDir()
 		if err := securefs.PrivateDir(scriptsDir); err != nil {
 			return "", fmt.Errorf("secure scripts directory: %w", err)
@@ -261,6 +263,12 @@ func LaunchContainerWithOptions(ctx context.Context, t docker.Template, onProgre
 		entrypoint = []string{"/bin/sh", "/onstart.sh"}
 		// Если нужно, чтобы после скрипта запускался оригинальный процесс,
 		// скрипт должен сам вызвать exec (например, добавив в конце exec "$@").
+	}
+	if t.OnStartScript != "" && runtime.GOOS == "windows" {
+		// Docker Desktop's file-sharing process uses the desktop token, which
+		// must not gain access to the privileged connector's private state.
+		// Copy into this container instead of publishing a host script path.
+		entrypoint = []string{"/bin/sh", "/onstart.sh"}
 	}
 
 	// 8. Проброс портов
@@ -315,6 +323,25 @@ func LaunchContainerWithOptions(ctx context.Context, t docker.Template, onProgre
 			os.Remove(scriptHostPath)
 		}
 		return "", fmt.Errorf("failed to create container: %w", err)
+	}
+	if t.OnStartScript != "" && runtime.GOOS == "windows" {
+		var archive bytes.Buffer
+		tw := tar.NewWriter(&archive)
+		err := tw.WriteHeader(&tar.Header{Name: "onstart.sh", Mode: 0o500, Size: int64(len(t.OnStartScript))})
+		if err == nil {
+			_, err = tw.Write([]byte(t.OnStartScript))
+		}
+		closeErr := tw.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err == nil {
+			err = cli.CopyToContainer(ctx, resp.ID, "/", &archive, container.CopyToContainerOptions{AllowOverwriteDirWithFile: false})
+		}
+		if err != nil {
+			_ = cli.ContainerRemove(context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true, RemoveVolumes: true})
+			return "", fmt.Errorf("copy container bootstrap: %w", err)
+		}
 	}
 
 	// 12. Запуск контейнера

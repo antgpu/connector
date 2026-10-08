@@ -68,7 +68,7 @@ func TestAutoFetchDropbearBinary_ManifestCacheAndChecksum(t *testing.T) {
 	}
 	if info, err := os.Stat(path1); err != nil {
 		t.Fatalf("stat fetched binary: %v", err)
-	} else if info.Mode().Perm()&0o111 == 0 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("expected executable permission on fetched binary, mode=%o", info.Mode().Perm())
 	}
 

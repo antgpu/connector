@@ -110,3 +110,19 @@ func TestHasPersistedEnrollmentState(t *testing.T) {
 		t.Fatal("expected persisted state when auth file exists")
 	}
 }
+
+func TestUpdaterPollBackoffCapsAndResets(t *testing.T) {
+	delay := 2 * time.Minute
+	for i := 0; i < 10; i++ {
+		delay = nextUpdaterPollDelay(delay, true)
+		if delay > 15*time.Minute {
+			t.Fatal("unbounded retry delay")
+		}
+	}
+	if delay != 15*time.Minute {
+		t.Fatalf("backoff cap=%s", delay)
+	}
+	if nextUpdaterPollDelay(delay, false) != 2*time.Minute {
+		t.Fatal("successful poll did not reset backoff")
+	}
+}

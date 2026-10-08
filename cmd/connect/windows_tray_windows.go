@@ -886,15 +886,19 @@ func trayWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			return 0
 		case wmDpiChanged:
 			if lParam != 0 {
-				r := (*rect)(unsafe.Pointer(lParam))
-				_, _, _ = procMoveWindow.Call(
-					hwnd,
-					uintptr(uint32(r.Left)),
-					uintptr(uint32(r.Top)),
-					uintptr(uint32(r.Right-r.Left)),
-					uintptr(uint32(r.Bottom-r.Top)),
-					1,
-				)
+				var r rect
+				// Window messages carry an external address. Let Windows validate
+				// it before copying, rather than dereferencing a uintptr in Go.
+				if err := windows.ReadProcessMemory(windows.CurrentProcess(), lParam, (*byte)(unsafe.Pointer(&r)), unsafe.Sizeof(r), nil); err == nil {
+					_, _, _ = procMoveWindow.Call(
+						hwnd,
+						uintptr(uint32(r.Left)),
+						uintptr(uint32(r.Top)),
+						uintptr(uint32(r.Right-r.Left)),
+						uintptr(uint32(r.Bottom-r.Top)),
+						1,
+					)
+				}
 			}
 			a.applyLogFont()
 			a.layoutLogEdit()

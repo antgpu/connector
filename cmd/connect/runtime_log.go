@@ -104,14 +104,14 @@ func isWindowsTrayInvocation(opts runtimeOptions) bool {
 	if opts.Foreground || opts.PrintVersion {
 		return false
 	}
-	if opts.ServiceInstall || opts.ServiceUninstall || opts.ServiceStart || opts.ServiceStop || opts.ServiceRun {
+	if opts.ServiceInstall || opts.ServiceUninstall || opts.ServiceStart || opts.ServiceStop || opts.ServiceRun || opts.ServiceRestart {
 		return false
 	}
 	return true
 }
 
 func shouldSkipRuntimeLogOpen(opts runtimeOptions) bool {
-	return opts.ServiceInstall || opts.ServiceUninstall || opts.ServiceStart || opts.ServiceStop
+	return opts.ServiceInstall || opts.ServiceUninstall || opts.ServiceStart || opts.ServiceStop || opts.ServiceRestart
 }
 
 func buildRuntimeLogWriter(opts runtimeOptions, fileWriter io.Writer) io.Writer {

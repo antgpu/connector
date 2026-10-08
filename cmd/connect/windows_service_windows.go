@@ -17,6 +17,7 @@ import (
 	"unsafe"
 
 	internaldocker "github.com/antgpu/connector/internal/docker"
+	"github.com/antgpu/connector/internal/securefs"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
@@ -30,6 +31,9 @@ func maybeHandleWindowsServiceMode(opts runtimeOptions) (bool, error) {
 		svcName = "antgpu-connect"
 	}
 
+	if opts.ServiceRestart {
+		return true, waitAndStartWindowsService(svcName)
+	}
 	if opts.ServiceInstall {
 		return true, installWindowsService(opts, svcName)
 	}
@@ -75,18 +79,12 @@ func installWindowsService(opts runtimeOptions, serviceName string) error {
 	if err != nil {
 		return fmt.Errorf("resolve state dir %q: %w", stateDir, err)
 	}
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return fmt.Errorf("create state dir %q: %w", stateDir, err)
+	if err := securefs.PrivateDir(stateDir); err != nil {
+		return fmt.Errorf("protect service state: %w", err)
 	}
-	if err := os.Chmod(stateDir, 0o700); err != nil {
-		return fmt.Errorf("chmod state dir %q: %w", stateDir, err)
+	if err := securefs.ServiceExecutable(exePath); err != nil {
+		return fmt.Errorf("unsafe service executable: %w", err)
 	}
-	_ = terminateSiblingConnectorProcesses(exePath)
-	time.Sleep(300 * time.Millisecond)
-	if err := rotateInstallConnectLog(stateDir); err != nil {
-		return fmt.Errorf("rotate install logs: %w", err)
-	}
-
 	if strings.TrimSpace(opts.Token) == "" {
 		authPath := filepath.Join(stateDir, MachineAuthPath)
 		if _, err := os.Stat(authPath); err != nil {
@@ -109,46 +107,50 @@ func installWindowsService(opts runtimeOptions, serviceName string) error {
 	}
 	defer m.Disconnect()
 
-	if existing, openErr := m.OpenService(serviceName); openErr == nil {
-		existing.Close()
-		fmt.Printf("service %q already exists, attempting automatic reconcile\n", serviceName)
-		if err := uninstallWindowsService(serviceName); err != nil {
-			return fmt.Errorf("service %q already exists and auto-uninstall failed: %w", serviceName, err)
+	args := windowsServiceRestartArgs(runtimeOptions{ServiceName: serviceName, StateDir: stateDir})
+	var s *mgr.Service
+	existing, openErr := m.OpenService(serviceName)
+	if openErr == nil {
+		s = existing
+		defer s.Close()
+		st, err := s.Query()
+		if err != nil {
+			return err
 		}
-		time.Sleep(600 * time.Millisecond)
-		if probe, probeErr := m.OpenService(serviceName); probeErr == nil {
-			probe.Close()
-			return fmt.Errorf("service %q still exists after auto-uninstall (possibly marked for deletion); retry install in a few seconds", serviceName)
-		} else if !errors.Is(probeErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-			return fmt.Errorf("verify service %q absence after auto-uninstall: %w", serviceName, probeErr)
+		if st.State != svc.Stopped {
+			return fmt.Errorf("service %q must be stopped by the installer before replacement", serviceName)
 		}
-	} else if !errors.Is(openErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-		return fmt.Errorf("open existing service %q: %w", serviceName, openErr)
+		cfg, err := s.Config()
+		if err != nil {
+			return err
+		}
+		previousArgs, err := windows.DecomposeCommandLine(cfg.BinaryPathName)
+		if err != nil || !windowsServiceUsesState(previousArgs, stateDir) {
+			return fmt.Errorf("existing service state does not match selected state directory")
+		}
+		cfg.BinaryPathName = windowsServiceBinaryPath(exePath, args)
+		if err := s.UpdateConfig(cfg); err != nil {
+			return err
+		}
+	} else if errors.Is(openErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		cfg := mgr.Config{DisplayName: "Antgpu Connect", Description: "Antgpu platform connector", StartType: mgr.StartAutomatic, DelayedAutoStart: true}
+		var err error
+		s, err = m.CreateService(serviceName, exePath, cfg, args...)
+		if err != nil {
+			return fmt.Errorf("create service %q: %w", serviceName, err)
+		}
+		defer s.Close()
+	} else {
+		return openErr
 	}
 
-	cfg := mgr.Config{
-		DisplayName:      "Antgpu Connect",
-		Description:      "Antgpu platform connector",
-		StartType:        mgr.StartAutomatic,
-		DelayedAutoStart: true,
+	if errors.Is(openErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		_ = s.SetRecoveryActions([]mgr.RecoveryAction{
+			{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+			{Type: mgr.ServiceRestart, Delay: 15 * time.Second},
+			{Type: mgr.ServiceRestart, Delay: 30 * time.Second},
+		}, 86400)
 	}
-
-	args := []string{"--service-run", "--service-name", serviceName, "--state-dir", stateDir}
-	if strings.TrimSpace(opts.Token) != "" {
-		args = append(args, strings.TrimSpace(opts.Token))
-	}
-
-	s, err := m.CreateService(serviceName, exePath, cfg, args...)
-	if err != nil {
-		return fmt.Errorf("create service %q: %w", serviceName, err)
-	}
-	defer s.Close()
-
-	_ = s.SetRecoveryActions([]mgr.RecoveryAction{
-		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
-		{Type: mgr.ServiceRestart, Delay: 15 * time.Second},
-		{Type: mgr.ServiceRestart, Delay: 30 * time.Second},
-	}, 86400)
 
 	if err := eventlog.InstallAsEventCreate(serviceName, eventlog.Error|eventlog.Warning|eventlog.Info); err != nil {
 		if !isAlreadyExistsErr(err) {
@@ -156,7 +158,13 @@ func installWindowsService(opts runtimeOptions, serviceName string) error {
 		}
 	}
 
-	if err := s.Start(); err != nil {
+	// SCM start arguments are transient; the enrollment token is never stored
+	// in the service command line or registry.
+	var startArgs []string
+	if strings.TrimSpace(opts.Token) != "" {
+		startArgs = []string{strings.TrimSpace(opts.Token)}
+	}
+	if err := s.Start(startArgs...); err != nil {
 		return fmt.Errorf("start service %q: %w", serviceName, err)
 	}
 
@@ -172,9 +180,6 @@ func installWindowsService(opts runtimeOptions, serviceName string) error {
 }
 
 func uninstallWindowsService(serviceName string) error {
-	exePath, _ := os.Executable()
-	exePath = strings.TrimSpace(exePath)
-
 	m, err := mgr.Connect()
 	if err != nil {
 		return fmt.Errorf("connect service manager: %w", err)
@@ -184,9 +189,6 @@ func uninstallWindowsService(serviceName string) error {
 	s, err := m.OpenService(serviceName)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-			if exePath != "" {
-				_ = terminateSiblingConnectorProcesses(exePath)
-			}
 			fmt.Printf("service %q is not installed\n", serviceName)
 			return nil
 		}
@@ -194,7 +196,9 @@ func uninstallWindowsService(serviceName string) error {
 	}
 	defer s.Close()
 
-	_ = stopWindowsService(serviceName, 20*time.Second)
+	if err := stopWindowsService(serviceName, 60*time.Second); err != nil {
+		return err
+	}
 
 	if err := s.Delete(); err != nil {
 		return fmt.Errorf("delete service %q: %w", serviceName, err)
@@ -206,9 +210,6 @@ func uninstallWindowsService(serviceName string) error {
 
 	if err := eventlog.Remove(serviceName); err != nil && !errors.Is(err, syscall.ERROR_FILE_NOT_FOUND) {
 		return fmt.Errorf("remove event log source: %w", err)
-	}
-	if exePath != "" {
-		_ = terminateSiblingConnectorProcesses(exePath)
 	}
 
 	fmt.Printf("service %q uninstalled\n", serviceName)
@@ -228,22 +229,6 @@ func trayAutorunValueName(serviceName string) string {
 		return "AntgpuConnectTray"
 	}
 	return "AntgpuConnectTray-" + serviceName
-}
-
-func terminateSiblingConnectorProcesses(exePath string) error {
-	base := strings.TrimSpace(filepath.Base(exePath))
-	if base == "" {
-		return nil
-	}
-	pid := os.Getpid()
-	cmd := exec.Command(
-		"taskkill",
-		"/F",
-		"/IM", base,
-		"/FI", fmt.Sprintf("PID ne %d", pid),
-	)
-	_ = cmd.Run()
-	return nil
 }
 
 func rotateInstallConnectLog(stateDir string) error {
@@ -542,6 +527,9 @@ func (h *windowsServiceHandler) Execute(args []string, requests <-chan svc.Chang
 	runOpts.Foreground = true
 	runOpts.ServiceRun = false
 	runOpts.RunningAsService = true
+	if len(args) == 2 && runOpts.Token == "" {
+		runOpts.Token = strings.TrimSpace(args[1])
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -591,4 +579,16 @@ func (h *windowsServiceHandler) Execute(args []string, requests <-chan svc.Chang
 			return false, 0
 		}
 	}
+}
+
+func windowsServiceUsesState(args []string, stateDir string) bool {
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--state-dir" && i+1 < len(args) {
+			return strings.EqualFold(filepath.Clean(args[i+1]), filepath.Clean(stateDir))
+		}
+		if strings.HasPrefix(args[i], "--state-dir=") {
+			return strings.EqualFold(filepath.Clean(strings.TrimPrefix(args[i], "--state-dir=")), filepath.Clean(stateDir))
+		}
+	}
+	return false
 }

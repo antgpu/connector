@@ -5,9 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/antgpu/connector/internal/securefs"
 )
 
 func prepareStateWorkingDir(opts runtimeOptions) error {
+	if isWindowsTrayInvocation(opts) {
+		return nil
+	}
 	stateDir := strings.TrimSpace(opts.StateDir)
 	if stateDir == "" {
 		return nil
@@ -17,26 +22,28 @@ func prepareStateWorkingDir(opts runtimeOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolve state dir %q: %w", stateDir, err)
 	}
-	if err := os.MkdirAll(absDir, 0o700); err != nil {
-		return fmt.Errorf("create state dir %q: %w", absDir, err)
-	}
-	if err := os.Chmod(absDir, 0o700); err != nil {
-		return fmt.Errorf("chmod state dir %q: %w", absDir, err)
+	if err := securefs.PrivateDir(absDir); err != nil {
+		return fmt.Errorf("protect state dir %q: %w", absDir, err)
 	}
 	if err := os.Chdir(absDir); err != nil {
 		return fmt.Errorf("chdir state dir %q: %w", absDir, err)
 	}
-	secureExistingStateFile(MachineAuthPath)
-	secureExistingStateFile(TunnelConfigPath)
-	secureExistingStateFile("connect.log")
+	for _, path := range []string{MachineAuthPath, TunnelConfigPath, "connect.log"} {
+		if err := secureExistingStateFile(path); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func secureExistingStateFile(path string) {
+func secureExistingStateFile(path string) error {
 	if strings.TrimSpace(path) == "" {
-		return
+		return nil
 	}
-	if _, err := os.Stat(path); err == nil {
-		_ = os.Chmod(path, 0o600)
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
 	}
+	return securefs.PrivateFile(path)
 }
