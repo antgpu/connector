@@ -72,5 +72,17 @@ Before activating signed releases, deploy the backend change that preserves the
 manifest `signature` field. Existing connectors do not acquire signature
 verification until their binaries are replaced; this is a coordinated migration.
 
+On Linux, a new release launched from the legacy updater cache authenticates a
+snapshot of its running executable against the pinned signed active manifest,
+atomically replaces the stable service executable, and execs that installed
+copy. It preserves enrollment and the service configuration. Existing systemd
+services are discovered by the current PID and invocation, including direct
+executables and the literal `exec` wrappers used by older installers; a new
+installation-path environment setting is not required. Ambiguous custom wrappers
+fail closed and require the state-preserving installer. Non-systemd legacy
+processes need an explicit `ANTGPU_CONNECT_INSTALL_PATH` for durable migration.
+The old updater still relies on its original HTTPS/checksum trust until it starts
+the new binary; an old executable cannot gain signature verification retroactively.
+
 CI retains two explicit daemon-only vulnerability notices for the monolithic
 Docker client dependency; keep the provider's Docker engine patched separately.

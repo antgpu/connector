@@ -13,11 +13,56 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	protocol "github.com/antgpu/connector-protocol"
 )
+
+func TestVerifyRunningCandidateRejectsInvalidBootstrap(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(rand.Reader)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "running-snapshot")
+	if err := os.WriteFile(path, []byte("running binary"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("running binary"))
+	valid := protocol.UpdateManifest{Version: "v1", Binaries: []protocol.UpdateArtifact{{OS: runtime.GOOS, Arch: runtime.GOARCH, URL: "https://api.example/connect", SHA256: hex.EncodeToString(sum[:])}}}
+	for _, kind := range []string{"valid", "unsigned", "tampered-signature", "wrong-version", "wrong-platform", "wrong-bytes"} {
+		t.Run(kind, func(t *testing.T) {
+			m := valid
+			m.Binaries = append([]protocol.UpdateArtifact(nil), valid.Binaries...)
+			if kind == "wrong-version" {
+				m.Version = "v2"
+			}
+			if kind == "wrong-platform" {
+				m.Binaries[0].Arch = "unsupported"
+			}
+			if kind == "wrong-bytes" {
+				m.Binaries[0].SHA256 = strings.Repeat("a", 64)
+			}
+			if kind != "unsigned" {
+				if err := protocol.SignUpdateManifest(&m, base64.StdEncoding.EncodeToString(key)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "tampered-signature" {
+				m.Version = "forged"
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(m) }))
+			defer server.Close()
+			manager := NewManager(ManagerConfig{APIAddr: server.URL, MachineToken: "test-only", Version: "v1", PublicKey: base64.StdEncoding.EncodeToString(pub)})
+			err := manager.VerifyRunningCandidate(context.Background(), path)
+			if (err == nil) != (kind == "valid") {
+				t.Fatalf("%s: %v", kind, err)
+			}
+		})
+	}
+}
 
 func TestBinaryFilename(t *testing.T) {
 	if got := binaryFilename("windows"); got != "connect.exe" {

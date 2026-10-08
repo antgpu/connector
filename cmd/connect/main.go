@@ -238,6 +238,9 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 		Logger:        log.Printf,
 	})
 	apiService.Updater = connectorUpdater
+	if err := completeLegacyMigration(ctx, connectorUpdater); err != nil {
+		return fmt.Errorf("complete legacy connector migration: %w", err)
+	}
 
 	runHostPreflight(ctx, &apiService, connectorUpdater)
 

@@ -57,6 +57,7 @@ require (
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/gaissmai/bart v0.26.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/btree v1.1.2 // indirect
 	github.com/google/gopacket v1.1.19 // indirect

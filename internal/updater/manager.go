@@ -166,6 +166,24 @@ func (m *Manager) Poll(ctx context.Context) (Result, error) {
 	return m.RequestUpdate(ctx, Request{})
 }
 
+// VerifyRunningCandidate authenticates a private snapshot of the executable
+// launched by a legacy updater before it can replace the service executable.
+// Legacy clients themselves do not verify manifest signatures.
+func (m *Manager) VerifyRunningCandidate(ctx context.Context, path string) error {
+	man, err := m.fetchManifest(ctx)
+	if err != nil {
+		return err
+	}
+	if man.Version != m.Snapshot().Version {
+		return fmt.Errorf("running version does not match signed active manifest")
+	}
+	item, ok := pickArtifact(man, runtime.GOOS, runtime.GOARCH)
+	if !ok {
+		return fmt.Errorf("signed manifest has no artifact for this platform")
+	}
+	return verifyCachedArtifact(path, item.SHA256)
+}
+
 func (m *Manager) RequestUpdate(ctx context.Context, req Request) (Result, error) {
 	m.mu.Lock()
 	if m.updating {
