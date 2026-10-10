@@ -20,6 +20,7 @@ import (
 	"github.com/antgpu/connector/internal/api"
 	internaldocker "github.com/antgpu/connector/internal/docker"
 	"github.com/antgpu/connector/internal/hw"
+	"github.com/antgpu/connector/internal/licensing"
 	"github.com/antgpu/connector/internal/runtimelog"
 	"github.com/antgpu/connector/internal/updater"
 	"github.com/sirupsen/logrus"
@@ -38,6 +39,10 @@ func main() {
 
 	if opts.PrintVersion {
 		fmt.Println(AppVersion)
+		return
+	}
+	if opts.PrintLicenses {
+		fmt.Print(licensing.Notices)
 		return
 	}
 

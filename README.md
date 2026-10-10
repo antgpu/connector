@@ -3,12 +3,18 @@
 The provider agent enrolls a machine with AntGPU, establishes its tunnel, reports
 hardware and health, and manages rented Docker workloads.
 
-This private repository is being prepared for release. Project code is licensed
-under [MIT](LICENSE); third-party components retain their respective licenses.
-Public documentation and the third-party notice inventory are pending. Windows
-startup, installer, permissions, updates, and Docker Desktop workload isolation
-are tested separately. The publishing workflow still builds Linux releases only;
-public Windows support requires a separately approved release.
+Project code is licensed under [MIT](LICENSE). The closed-source AntGPU backend is
+separate; this agent builds using public dependencies. [Bundled third-party
+notices](internal/licensing/NOTICES.md) retain upstream licenses, including embedded
+Swagger UI assets. Release binaries contain these notices; `connect --licenses`
+prints them without starting the agent or changing machine state.
+
+Native Linux and native Windows with Docker Desktop's local WSL2 Linux engine are
+supported boundaries. See [installation and support](docs/installation.md) and
+[Windows workload isolation](docs/windows-workload-isolation.md). Linux amd64 and
+Windows amd64 were tested on physical NVIDIA hardware, including clean dependency
+installs, signed automatic updates, OS reboots, GPU rentals, SSH, and model inference.
+Linux arm64 is built and checked in CI; physical arm64 validation is pending.
 
 ## Build and run
 
@@ -54,7 +60,7 @@ fork remains in use to preserve its port-forwarding extensions. Nebula's optiona
 diagnostic SSH server is disabled.
 
 Developer builds have no update trust key and refuse fleet updates. For release
-binaries, `bash scripts/build-release VERSION` embeds the reviewed public key in
+binaries, `bash scripts/build-release VERSION` builds Linux amd64/arm64 and Windows amd64 and embeds the reviewed public key in
 `.github/connector-update.pub`. `cmd/release-manifest` signs binary checksums with
 the corresponding offline Ed25519 key supplied through `CONNECTOR_SIGNING_KEY`.
 Never commit the signing key. Clients verify the manifest signature and binary

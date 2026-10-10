@@ -11,3 +11,6 @@ for arch in amd64 arm64; do
     -ldflags "-s -w -X main.AppVersion=$version -X $module/internal/updater.TrustedPublicKey=$public_key" \
     -o "dist/$version/connect-linux-$arch" ./cmd/connect
 done
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+  -ldflags "-s -w -X main.AppVersion=$version -X $module/internal/updater.TrustedPublicKey=$public_key" \
+  -o "dist/$version/connect-windows-amd64.exe" ./cmd/connect

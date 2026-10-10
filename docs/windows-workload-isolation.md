@@ -3,7 +3,7 @@
 Supported boundary: native Windows connector service controlling Docker Desktop's
 local Linux engine through its named pipe. Native Windows containers, remote
 Docker engines, and platforms without the required firewall/resource capabilities
-fail closed. This does not enable Windows publishing; release approval is separate.
+fail closed. Publishing uses the separately protected manual release path.
 
 Rentals use the owned `antgpu-workloads` bridge (`antgpu0`) with inter-container
 communication disabled and IPv6 disabled. Published ports bind to IPv4 loopback.

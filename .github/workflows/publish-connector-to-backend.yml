@@ -43,13 +43,13 @@ jobs:
           set -euo pipefail
           reviewers="$(gh api "repos/$REPOSITORY/environments/connector-production" --jq '[.protection_rules[] | select(.type == "required_reviewers") | .reviewers[]] | length')"
           [[ "$reviewers" -gt 0 ]] || { echo "connector-production must have required reviewers" >&2; exit 1; }
-      - name: Build reviewed Linux binaries
+      - name: Build reviewed connector binaries
         run: bash scripts/build-release "$VERSION"
       - name: Sign update manifest
         env:
           CONNECTOR_SIGNING_KEY: ${{ secrets.CONNECTOR_SIGNING_KEY }}
           PUBLIC_BASE: ${{ vars.ANTGPU_PUBLIC_BASE_URL || 'https://api.antgpu.ai' }}
-        run: go run ./cmd/release-manifest -version "$VERSION" -base-url "$PUBLIC_BASE"
+        run: go run ./cmd/release-manifest -version "$VERSION" -base-url "$PUBLIC_BASE" -platforms linux/amd64,linux/arm64,windows/amd64
       - name: Upload and activate signed manifest
         env:
           BACKEND_HOST: ${{ secrets.BACKEND_HOST }}
@@ -79,7 +79,8 @@ jobs:
           remote="${STATIC_ROOT%/}/$VERSION"
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_backend -p "${BACKEND_SSH_PORT:-22}" "$target" "mkdir '$remote'"
           scp -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_backend -P "${BACKEND_SSH_PORT:-22}" \
-            "dist/$VERSION/connect-linux-amd64" "dist/$VERSION/connect-linux-arm64" "$target:$remote/"
+            "dist/$VERSION/connect-linux-amd64" "dist/$VERSION/connect-linux-arm64" \
+            "dist/$VERSION/connect-windows-amd64.exe" "$target:$remote/"
           curl --proto '=https' --fail --show-error --silent --connect-timeout 10 --max-time 60 \
             -X POST "${API_BASE%/}/internal/connect/connector/manifest?activate=true" \
             -H "Authorization: Bearer $CONNECT_ARTIFACTS_TOKEN" -H 'Content-Type: application/json' \

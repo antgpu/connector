@@ -13,6 +13,7 @@ import (
 type runtimeOptions struct {
 	Foreground       bool
 	PrintVersion     bool
+	PrintLicenses    bool
 	Token            string
 	ServiceName      string
 	StateDir         string
@@ -34,6 +35,7 @@ func parseRuntimeOptions(args []string) (runtimeOptions, error) {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	fs.BoolVar(&out.Foreground, "foreground", false, "run in foreground (disable daemon detach)")
 	fs.BoolVar(&out.PrintVersion, "version", false, "print version and exit")
+	fs.BoolVar(&out.PrintLicenses, "licenses", false, "print bundled licenses and exit")
 	fs.StringVar(&out.ServiceName, "service-name", "antgpu-connect", "windows service name")
 	fs.BoolVar(&out.ServiceInstall, "service-install", false, "install Windows service")
 	fs.BoolVar(&out.ServiceUninstall, "service-uninstall", false, "uninstall Windows service")

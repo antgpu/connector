@@ -43,7 +43,7 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           python3 scripts/check-vulnerabilities.py
-      - name: Compile Linux release targets
+      - name: Compile release targets
         run: bash scripts/build-release "ci-${GITHUB_SHA:0:12}"
 
   windows:
@@ -61,3 +61,15 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: go vet ./...
+      - name: Verify bundled licenses without host setup
+        env:
+          CGO_ENABLED: '0'
+        shell: pwsh
+        run: |
+          $state = Join-Path $env:RUNNER_TEMP 'connector-license-state'
+          $notices = Join-Path $env:RUNNER_TEMP 'connector-licenses.txt'
+          go run ./cmd/connect --licenses --state-dir $state > $notices
+          if ($LASTEXITCODE -ne 0) { throw 'License command failed' }
+          if (Test-Path $state) { throw 'License command created machine state' }
+          if (-not (Select-String -LiteralPath $notices -SimpleMatch 'swagger-ui-bundle.js.LICENSE.txt')) { throw 'Embedded UI notices missing' }
+          if (-not (Select-String -LiteralPath $notices -SimpleMatch 'Go standard library')) { throw 'Go notice missing' }
