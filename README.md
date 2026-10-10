@@ -62,7 +62,8 @@ diagnostic SSH server is disabled.
 Developer builds have no update trust key and refuse fleet updates. For release
 binaries, `bash scripts/build-release VERSION` builds Linux amd64/arm64 and Windows amd64 and embeds the reviewed public key in
 `.github/connector-update.pub`. `cmd/release-manifest` signs binary checksums with
-the corresponding offline Ed25519 key supplied through `CONNECTOR_SIGNING_KEY`.
+the corresponding Ed25519 key supplied through `CONNECTOR_SIGNING_KEY` from
+the protected GitHub release environment.
 Never commit the signing key. Clients verify the manifest signature and binary
 checksum before restarting. Artifact downloads allow five minutes; manifest
 checks retain a 30-second deadline. Concurrent downloads are serialized, rentals
@@ -72,12 +73,13 @@ are checked again before replacement, and failed background polls back off to
 Pushes and pull requests run CI. The publishing workflow runs only by manual
 dispatch from `master`, after checks pass, with the exact confirmation
 `publish-active-update`. It requires the `connector-production` environment,
-signing and publishing secrets, explicitly configured artifact storage, and pinned
-SSH host keys. Configure required environment reviewers and branch/workflow
-protection before public release; declaring an environment alone adds no review
-requirement. No production credentials have been transferred to this repository.
+environment-scoped signing and publishing secrets, server-controlled immutable
+artifact storage, and pinned SSH host keys. The upload key grants only a restricted
+artifact receiver, without shell access. The release environment requires
+`@mintyleaf` approval and allows only `master`; admin bypass is disabled. Existing
+organization administrators retain the ability to change repository protections.
 
-The proposed [maintainer policy](.github/REPOSITORY_POLICY.md) permits direct
+The applied [maintainer policy](.github/REPOSITORY_POLICY.md) permits direct
 `master` pushes by `@mintyleaf`, with CI afterward. Other contributions require
 a reviewed PR and passing checks. Publishing stays a separate manual action.
 
