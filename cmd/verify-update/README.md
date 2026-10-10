@@ -11,7 +11,9 @@ reviewed installer before executing it. The installer script itself remains an
 HTTPS bootstrap trust decision, as with the Linux installer.
 
 The immutable artifact is `installer-verifier-v2/connect-windows-amd64.exe`.
-Build from this source with Go 1.27.1:
+Build from connector commit `faa12a2` (protocol v0.1.0) with Go 1.27.1.
+The protocol module version is part of the Go build information and changes the
+checksum even when its source is identical:
 
 ```sh
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -buildvcs=false -trimpath \
@@ -33,4 +35,4 @@ never overwrite this artifact in place. The active connector manifest does not
 need to select the verifier as a connector update.
 
 Deploying the artifact/installer and publishing Windows releases remain separate,
-explicit release steps. The normal publishing workflow remains Linux-only.
+explicit release steps. The normal publishing workflow builds Linux amd64/arm64 and Windows amd64.

@@ -6,7 +6,7 @@ them; public repositories support rulesets on GitHub Free.
 
 `master-review.json` allows only `@mintyleaf` (GitHub user ID `17470408`) to bypass
 the PR and CI requirements. The maintainer can push directly to `master`, with CI
-running afterward. Other contributors must use PRs, pass the `test` check from
+running afterward. Other contributors must use PRs, pass the `test` and `windows` checks from
 GitHub Actions, resolve review threads, and receive a current CODEOWNER approval.
 `.github/CODEOWNERS` assigns every path to `@mintyleaf`. Repository/organization
 administrators can edit the settings themselves; review those access grants
@@ -40,7 +40,10 @@ workflow with an explicit confirmation, successful checks, signed artifacts,
 and the `connector-production` environment. Configure its allowed deployment
 branch as `master`, required reviewer `@mintyleaf`, self-review allowed for solo
 maintenance, and admin bypass disabled. Keep signing/publishing credentials in
-that environment's secrets. Enable the publishing workflow only for an approved
+that environment's secrets. The upload SSH key must use a forced command that
+only accepts checksummed, immutable connector artifacts; it must not grant a
+shell or forwarding. The server controls the artifact root. Organization admins
+retain their current access and can change repository/environment protections. Enable the publishing workflow only for an approved
 production rollout. This release confirmation remains required even for direct
 maintainer pushes.
 
