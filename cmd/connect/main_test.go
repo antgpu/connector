@@ -18,10 +18,14 @@ func TestShouldRunAutoUpdaterMatchesBuildMode(t *testing.T) {
 	}
 }
 
-func TestEffectiveBenchRunModeMatchesBuildMode(t *testing.T) {
+func TestEffectiveBenchRunModeHonorsBackendPlan(t *testing.T) {
 	got := effectiveBenchRunMode(hw.BenchRunMode{})
-	if !got.RunGPUBase || !got.RunCompat || !got.RunStress {
-		t.Fatalf("normal build must retain hardened benchmark groups: %+v", got)
+	if got.RunGPUBase || got.RunCompat || got.RunStress || got.RunNetwork {
+		t.Fatalf("cached results must not be forced to rerun: %+v", got)
+	}
+	requested := hw.BenchRunMode{RunStress: true, RunNetwork: true}
+	if got := effectiveBenchRunMode(requested); got != requested {
+		t.Fatalf("backend requests changed: %+v", got)
 	}
 }
 

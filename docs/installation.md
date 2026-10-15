@@ -71,6 +71,20 @@ selected installation; `-PreserveState` repairs it without reenrollment.
 Drain active rentals before reinstalling. Credentials and cached updates require
 SYSTEM/Administrator access; the desktop tray does not grant access to private logs.
 
+With a connector release supporting `--no-popup`, pass `-NoPopup` to the installer
+to prevent the log viewer from opening automatically during installation or repair:
+
+```powershell
+Install-AntgpuConnect -TokenFile 'C:\private\enrollment.token' -Force -NoPopup
+# Repair an enrolled machine without opening its log window:
+Install-AntgpuConnect -NoPopup
+```
+
+File logging and the tray's View Logs action remain available. `-NoPopup` affects
+this installation, not future manual log viewing. Use `-Force` separately to
+suppress installation prompts. The installer refuses an older signed binary
+without this option before stopping the existing service or changing enrollment.
+
 The checksum-pinned bootstrap verifier authenticates the signed manifest before
 the installer executes a connector binary. Both the installer and its verifier
 must be deployed together as described in [verifier packaging](../cmd/verify-update/README.md).
@@ -119,3 +133,32 @@ can exhaust disk space between checks. No filesystem migration is required.
 The isolation boundary is Docker's shared kernel and GPU driver, not a separate
 virtual machine per tenant. See [Windows isolation](windows-workload-isolation.md)
 and the main README for the enforced network and resource limits.
+
+
+## Benchmark reuse and trusted hosts
+
+A backend supporting benchmark policy stores successful results across connector
+restarts, reboots, repairs and ordinary self-updates. Standard validity is 7 days
+for GPU performance/compatibility, 30 days for stress, and 6 hours for throughput.
+An administrator can mark a machine trusted in the admin Machines benchmark panel:
+trusted validity is 30 days, 90 days, and 24 hours respectively. Initial successful
+admission remains mandatory. There is no provider-controlled trust/skip flag.
+
+A cached reboot probes the GPU/driver/Docker identity and checks Docker GPU
+availability and the tunnel. GPU/runtime or benchmark-image changes invalidate
+GPU results; network address/source changes invalidate throughput. The connector
+checks for due or admin-requested validation every five minutes and obtains an
+exclusive backend reservation before expensive tests. It defers during existing
+rentals and blocks new provisioning during benchmarking. Results retain their
+original successful timestamps when reused; skipped or failed checks do not renew
+validity. ECC remains unsupported.
+
+Network-only renewal invokes the pinned image's iperf3 directly without GPU access.
+Compatibility/stress-only runs discard any unsolicited performance metrics emitted
+by older pinned images; the CUDA runner source also skips workload/tensor scoring
+when GPU performance is not requested. Rebuilding/publishing that image is a
+separate release operation. The current published image remains compatible.
+
+Deploy the new backend API before releasing the connector. Against an older API,
+the connector retains full legacy startup admission. Admin trust requires both
+backend and connector support; it is not a workaround for failed readiness checks.

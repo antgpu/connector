@@ -11,6 +11,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	nethttp "github.com/antgpu/connector/internal/apierror"
@@ -42,6 +44,8 @@ type APIService struct {
 	StateDir          string
 	Provisioning      *ProvisioningManager
 	UpdatesDisabled   bool
+	WorkloadMutex     *sync.RWMutex
+	BenchmarkReady    *atomic.Bool
 }
 
 func (s APIService) WebService() *web.Service {

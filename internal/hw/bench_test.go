@@ -127,7 +127,7 @@ func TestApplyBenchOutput_ReportsGPUWorkloadError(t *testing.T) {
 	specs := &SystemSpecs{}
 	out := benchRunnerOutput{GPUWorkload: map[string]any{"status": "error", "error": "gpu0=no_valid_samples"}}
 
-	applyBenchOutput(specs, out, BenchRunMode{})
+	applyBenchOutput(specs, out, BenchRunMode{RunGPUBase: true})
 
 	if !strings.Contains(specs.BenchFetchErr, "gpu_workload=gpu0=no_valid_samples") {
 		t.Fatalf("expected workload bench error, got %q", specs.BenchFetchErr)
@@ -138,7 +138,7 @@ func TestApplyBenchOutput_RequiresGPUWorkload(t *testing.T) {
 	specs := &SystemSpecs{}
 	out := benchRunnerOutput{}
 
-	applyBenchOutput(specs, out, BenchRunMode{})
+	applyBenchOutput(specs, out, BenchRunMode{RunGPUBase: true})
 
 	if !strings.Contains(specs.BenchFetchErr, "gpu_workload=skip") {
 		t.Fatalf("expected workload missing bench error, got %q", specs.BenchFetchErr)

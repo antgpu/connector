@@ -71,8 +71,13 @@ are checked again before replacement, and failed background polls back off to
 15 minutes.
 
 Pushes and pull requests run CI. The publishing workflow runs only by manual
-dispatch from `master`, after checks pass, with the exact confirmation
-`publish-active-update`. It requires the `connector-production` environment,
+dispatch from `master`, after checks pass. It defaults to `mode=stage` with
+`confirm=stage-connector-release`: artifacts are registered without changing the
+stable version. Backend admins can offer that staged release to explicit machine
+IDs, inspect their status, then promote separately. Pausing stops new offers and
+retains existing canary pins. Direct fleet activation remains available only with
+`mode=fleet` and `confirm=publish-active-update`. Deploy the backend rollout
+support before using these modes. It requires the `connector-production` environment,
 environment-scoped signing and publishing secrets, server-controlled immutable
 artifact storage, and pinned SSH host keys. The upload key grants only a restricted
 artifact receiver, without shell access. The release environment requires

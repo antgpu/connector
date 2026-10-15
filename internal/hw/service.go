@@ -18,6 +18,7 @@ import (
 )
 
 type SystemSpecs struct {
+	BenchmarkProtocol   int                 `json:"benchmark_protocol,omitempty"`
 	GraphicsCards       []*gpu.GraphicsCard `json:"cards"`
 	RentableGPUs        []RentableGPU       `json:"rentable_gpus"`
 	GPUVRAMMB           []uint64            `json:"gpu_vram_mb"`

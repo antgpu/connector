@@ -37,6 +37,15 @@ type ContainerCreateFromTemplateOutput struct {
 }
 
 func (s APIService) ContainerCreateFromTemplate(ctx context.Context, input ContainerCreateFromTemplateInput, output *ContainerCreateFromTemplateOutput) error {
+	if s.WorkloadMutex != nil {
+		if !s.WorkloadMutex.TryRLock() {
+			return status.Wrap(fmt.Errorf("benchmark revalidation is running"), status.FailedPrecondition)
+		}
+		defer s.WorkloadMutex.RUnlock()
+	}
+	if s.BenchmarkReady != nil && !s.BenchmarkReady.Load() {
+		return status.Wrap(fmt.Errorf("machine benchmark revalidation is pending"), status.FailedPrecondition)
+	}
 	if input.TemplateID <= 0 {
 		return status.Wrap(fmt.Errorf("template_id is required"), status.InvalidArgument)
 	}
@@ -66,6 +75,15 @@ type ContainerStartOutput struct {
 }
 
 func (s APIService) ContainerStart(ctx context.Context, input ContainerIDInput, output *ContainerStartOutput) error {
+	if s.WorkloadMutex != nil {
+		if !s.WorkloadMutex.TryRLock() {
+			return status.Wrap(fmt.Errorf("benchmark revalidation is running"), status.FailedPrecondition)
+		}
+		defer s.WorkloadMutex.RUnlock()
+	}
+	if s.BenchmarkReady != nil && !s.BenchmarkReady.Load() {
+		return status.Wrap(fmt.Errorf("machine benchmark revalidation is pending"), status.FailedPrecondition)
+	}
 	if input.ContainerID == "" {
 		return status.Wrap(fmt.Errorf("container_id is required"), status.InvalidArgument)
 	}

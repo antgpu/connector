@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
@@ -79,7 +80,13 @@ func EnrichWithBenchmarks(ctx context.Context, specs *SystemSpecs, netCfg BenchN
 		return
 	}
 
-	mode = HardenBenchRunMode(mode)
+	if !mode.RunGPUBase && !mode.RunCompat && !mode.RunECC && !mode.RunStress && !mode.RunNetwork {
+		return
+	}
+	if mode.RunNetwork && !mode.RunGPUBase && !mode.RunCompat && !mode.RunECC && !mode.RunStress {
+		runNetworkBenchmark(ctx, specs, netCfg)
+		return
+	}
 
 	imageVariant, reason, ok := selectBenchImageVariant(runtime.GOOS, specs)
 	if !ok {
@@ -98,9 +105,9 @@ func EnrichWithBenchmarks(ctx context.Context, specs *SystemSpecs, netCfg BenchN
 }
 
 func HardenBenchRunMode(mode BenchRunMode) BenchRunMode {
-	mode.RunGPUBase = true
-	mode.RunCompat = true
-	mode.RunStress = true
+	// The authenticated backend plan controls expensive work. ECC is unsupported
+	// by the CUDA runner; a skipped ECC object must not renew its validity.
+	mode.RunECC = false
 	return mode
 }
 
@@ -249,6 +256,15 @@ func runBenchContainer(ctx context.Context, imageTag string, benchDirHint string
 }
 
 func runDockerCommandWithLiveOutput(ctx context.Context, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "run" {
+		name := fmt.Sprintf("antgpu-benchmark-%d-%d", os.Getpid(), time.Now().UnixNano())
+		args = append([]string{"run", "--name", name}, args[1:]...)
+		defer func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = exec.CommandContext(cleanup, "docker", "rm", "-f", name).Run()
+		}()
+	}
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	var buf bytes.Buffer
 	writer := io.MultiWriter(&buf, os.Stdout)
@@ -384,7 +400,7 @@ func applyBenchOutput(specs *SystemSpecs, output benchRunnerOutput, mode BenchRu
 			errs = append(errs, "network="+e)
 		}
 	}
-	if status := nestedStatus(output.GPUWorkload); status != "success" {
+	if status := nestedStatus(output.GPUWorkload); mode.RunGPUBase && status != "success" {
 		if e, _ := output.GPUWorkload["error"].(string); strings.TrimSpace(e) != "" {
 			errs = append(errs, "gpu_workload="+strings.TrimSpace(e))
 		} else {

@@ -1020,9 +1020,13 @@ int main() {
         for (int i = 0; i < count; ++i) devices.push_back(run_device(i, run_base, run_compat_flag, run_stress_flag));
     }
     GPUWorkloadConfig workload_cfg = gpu_workload_config();
-    GPUWorkloadResult workload_result = run_gpu_workload(devices, workload_cfg, fatal);
+    GPUWorkloadResult workload_result;
+    workload_result.status = "skip";
+    if (run_base) workload_result = run_gpu_workload(devices, workload_cfg, fatal);
     GPUTensorConfig tensor_cfg = gpu_tensor_config();
-    GPUTensorResult tensor_result = run_gpu_tensor(devices, tensor_cfg, fatal);
+    GPUTensorResult tensor_result;
+    tensor_result.status = "skip";
+    if (run_base) tensor_result = run_gpu_tensor(devices, tensor_cfg, fatal);
     NetworkResult net = run_network(run_network_flag);
     print_result(devices, net, fatal, workload_cfg, workload_result, tensor_cfg, tensor_result);
     return 0;

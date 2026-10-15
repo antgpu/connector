@@ -18,6 +18,7 @@ type runtimeOptions struct {
 	ServiceName      string
 	StateDir         string
 	ShowLogs         bool
+	NoPopup          bool
 	TestAutoUpdate   bool
 	RunningAsService bool
 
@@ -45,6 +46,7 @@ func parseRuntimeOptions(args []string) (runtimeOptions, error) {
 	fs.BoolVar(&out.ServiceRestart, "service-restart", false, "internal: restart a stopped Windows service after update")
 	fs.StringVar(&out.StateDir, "state-dir", "", "connector state working directory")
 	fs.BoolVar(&out.ShowLogs, "show-logs", false, "internal: open tray log viewer on startup")
+	fs.BoolVar(&out.NoPopup, "no-popup", false, "do not automatically open the log viewer after Windows service installation")
 	fs.BoolVar(&out.TestAutoUpdate, "test-auto-update", false, "force connector update check at startup (dev/testing)")
 	fs.SetOutput(os.Stderr)
 

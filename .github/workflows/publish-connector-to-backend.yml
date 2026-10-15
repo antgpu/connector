@@ -1,4 +1,4 @@
-name: Publish Active Connector Update
+name: Stage or Publish Connector Update
 
 on:
   workflow_dispatch:
@@ -7,8 +7,14 @@ on:
         description: Release version
         required: true
         type: string
+      mode:
+        description: Stage for selected-machine testing, or explicitly activate for the fleet
+        required: true
+        default: stage
+        type: choice
+        options: [stage, fleet]
       confirm:
-        description: Type publish-active-update to activate this version for the fleet
+        description: Type stage-connector-release for stage, or publish-active-update for fleet
         required: true
         type: string
 
@@ -24,12 +30,13 @@ jobs:
   checks:
     uses: ./.github/workflows/ci.yml
   publish:
-    if: github.ref == 'refs/heads/master' && inputs.confirm == 'publish-active-update'
+    if: github.ref == 'refs/heads/master' && ((inputs.mode == 'stage' && inputs.confirm == 'stage-connector-release') || (inputs.mode == 'fleet' && inputs.confirm == 'publish-active-update'))
     needs: checks
     runs-on: ubuntu-latest
     environment: connector-production
     env:
       VERSION: ${{ inputs.version }}
+      RELEASE_MODE: ${{ inputs.mode }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -50,7 +57,7 @@ jobs:
           CONNECTOR_SIGNING_KEY: ${{ secrets.CONNECTOR_SIGNING_KEY }}
           PUBLIC_BASE: ${{ vars.ANTGPU_PUBLIC_BASE_URL || 'https://api.antgpu.ai' }}
         run: go run ./cmd/release-manifest -version "$VERSION" -base-url "$PUBLIC_BASE" -platforms linux/amd64,linux/arm64,windows/amd64
-      - name: Upload and activate signed manifest
+      - name: Upload signed artifacts and register release
         env:
           BACKEND_HOST: ${{ secrets.BACKEND_HOST }}
           BACKEND_SSH_PORT: ${{ secrets.BACKEND_SSH_PORT }}
@@ -74,6 +81,11 @@ jobs:
           printf '%s\n' "$BACKEND_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_backend ~/.ssh/known_hosts
           trap 'rm -f ~/.ssh/id_backend' EXIT
+          case "$RELEASE_MODE" in
+            stage) activate=false ;;
+            fleet) activate=true ;;
+            *) echo "invalid release mode" >&2; exit 1 ;;
+          esac
           target="$BACKEND_SSH_USER@$BACKEND_HOST"
           for artifact in connect-linux-amd64 connect-linux-arm64 connect-windows-amd64.exe; do
             file="dist/$VERSION/$artifact"
@@ -84,7 +96,7 @@ jobs:
               "connector-upload $VERSION $artifact $checksum $size" < "$file"
           done
           curl --proto '=https' --fail --show-error --silent --connect-timeout 10 --max-time 60 \
-            -X POST "${API_BASE%/}/internal/connect/connector/manifest?activate=true" \
+            -X POST "${API_BASE%/}/internal/connect/connector/manifest?activate=${activate}" \
             -H "Authorization: Bearer $CONNECT_ARTIFACTS_TOKEN" -H 'Content-Type: application/json' \
             --data-binary "@dist/$VERSION/connector-manifest.json"
-          echo "Activated signed connector version $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "Registered signed connector version $VERSION (mode=$RELEASE_MODE, fleet activation=$activate)" >> "$GITHUB_STEP_SUMMARY"

@@ -97,7 +97,7 @@ func installWindowsService(opts runtimeOptions, serviceName string) error {
 	if err := bootstrapModelRunnerInstallEnable(); err != nil {
 		fmt.Printf("warning: model runner bootstrap during install: %v\n", err)
 	}
-	if err := markShowLogsOnce(stateDir); err != nil {
+	if err := markShowLogsOnce(stateDir, opts.NoPopup); err != nil {
 		return fmt.Errorf("prepare one-shot log viewer marker: %w", err)
 	}
 
@@ -328,11 +328,6 @@ func startTrayNow(exePath, serviceName, stateDir string, showLogs bool) error {
 	}
 	_ = cmd.Process.Release()
 	return nil
-}
-
-func markShowLogsOnce(stateDir string) error {
-	marker := filepath.Join(stateDir, showLogsOnceMarker)
-	return os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o644)
 }
 
 func consumeShowLogsOnce(stateDir string) bool {

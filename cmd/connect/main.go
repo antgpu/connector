@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -227,6 +228,8 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 		}
 	}
 
+	apiService.WorkloadMutex = &sync.RWMutex{}
+	apiService.BenchmarkReady = &atomic.Bool{}
 	connectorUpdater := updater.NewManager(updater.ManagerConfig{
 		APIAddr:      APIAddr,
 		MachineToken: apiService.MachineAuthData.MachineToken,
@@ -234,6 +237,10 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 		CacheRoot:    filepath.Join("cache", "updates"),
 		PublicKey:    updater.TrustedPublicKey,
 		HasRunningManagedContainers: func(ctx context.Context) (bool, error) {
+			if !apiService.WorkloadMutex.TryRLock() {
+				return true, nil
+			}
+			defer apiService.WorkloadMutex.RUnlock()
 			if apiService.DockerService == nil {
 				return false, nil
 			}
@@ -315,61 +322,78 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 	}
 
 	specs := hw.FetchSpecs()
-	benchCtx, cancelBench := context.WithTimeout(ctx, benchTimeout())
-	benchNetCfg := hw.BenchNetworkConfig{}
-	benchMode := hw.BenchRunMode{}
-	if cfgData, err := apiService.GetMachineConnectionConfig(false); err != nil {
-		log.Printf("get machine config for bench settings: %v", err)
-	} else {
-		benchNetCfg = hw.BenchNetworkConfig{
-			IperfHost:    cfgData.Bench.IperfHost,
-			IperfPort:    cfgData.Bench.IperfPort,
-			IperfSeconds: cfgData.Bench.IperfSeconds,
-		}
-		benchMode = hw.BenchRunMode{
-			RunGPUBase: cfgData.Bench.RunGPUBase,
-			RunCompat:  cfgData.Bench.RunCompat,
-			RunECC:     cfgData.Bench.RunECC,
-			RunStress:  cfgData.Bench.RunStress,
-			RunNetwork: cfgData.Bench.RunNetwork,
-		}
+	benchmarkManaged := false
+	if shouldEnforceBenchSuccess() {
+		benchmarkManaged, err = runBenchmarkCycle(ctx, &apiService, specs, true)
 	}
-	benchMode = effectiveBenchRunMode(benchMode)
-	sendConnectorLog("info", "benchmark", "benchmark started", map[string]any{
-		"run_gpu_base": benchMode.RunGPUBase,
-		"run_compat":   benchMode.RunCompat,
-		"run_ecc":      benchMode.RunECC,
-		"run_stress":   benchMode.RunStress,
-		"run_network":  benchMode.RunNetwork,
-	})
-	hw.EnrichWithBenchmarks(benchCtx, specs, benchNetCfg, benchMode)
-	cancelBench()
+	if err != nil {
+		return fmt.Errorf("startup benchmark policy: %w", err)
+	}
+	if !benchmarkManaged {
+		benchCtx, cancelBench := context.WithTimeout(ctx, benchTimeout())
+		benchNetCfg := hw.BenchNetworkConfig{}
+		benchMode := hw.BenchRunMode{}
+		if cfgData, err := apiService.GetMachineConnectionConfig(false); err != nil {
+			log.Printf("get machine config for bench settings: %v", err)
+		} else {
+			benchNetCfg = hw.BenchNetworkConfig{
+				IperfHost:    cfgData.Bench.IperfHost,
+				IperfPort:    cfgData.Bench.IperfPort,
+				IperfSeconds: cfgData.Bench.IperfSeconds,
+			}
+			benchMode = hw.BenchRunMode{
+				RunGPUBase: cfgData.Bench.RunGPUBase,
+				RunCompat:  cfgData.Bench.RunCompat,
+				RunECC:     cfgData.Bench.RunECC,
+				RunStress:  cfgData.Bench.RunStress,
+				RunNetwork: cfgData.Bench.RunNetwork,
+			}
+		}
+		// An older backend has no fingerprint-aware policy: retain full admission.
+		benchMode.RunGPUBase = true
+		benchMode.RunCompat = true
+		benchMode.RunStress = true
+		benchMode = effectiveBenchRunMode(benchMode)
+		sendConnectorLog("info", "benchmark", "benchmark started", map[string]any{
+			"run_gpu_base": benchMode.RunGPUBase,
+			"run_compat":   benchMode.RunCompat,
+			"run_ecc":      benchMode.RunECC,
+			"run_stress":   benchMode.RunStress,
+			"run_network":  benchMode.RunNetwork,
+		})
+		hw.EnrichWithBenchmarks(benchCtx, specs, benchNetCfg, benchMode)
+		cancelBench()
 
-	specs.ModelRunner = detectModelRunnerCapability(ctx, apiService.DockerService)
+		specs.ModelRunner = detectModelRunnerCapability(ctx, apiService.DockerService)
 
-	benchRequested := benchMode.RunGPUBase || benchMode.RunCompat || benchMode.RunECC || benchMode.RunStress || benchMode.RunNetwork
-	if benchRequested {
-		if benchErr := strings.TrimSpace(specs.BenchFetchErr); benchErr != "" {
-			if shouldEnforceBenchSuccess() {
-				reason := fmt.Sprintf("bench failed; refusing to start connector services: %s", benchErr)
+		benchRequested := benchMode.RunGPUBase || benchMode.RunCompat || benchMode.RunECC || benchMode.RunStress || benchMode.RunNetwork
+		if benchRequested {
+			if benchErr := strings.TrimSpace(specs.BenchFetchErr); benchErr != "" {
+				if shouldEnforceBenchSuccess() {
+					reason := fmt.Sprintf("bench failed; refusing to start connector services: %s", benchErr)
+					fields := benchmarkLogFields(specs)
+					fields["error"] = benchErr
+					sendConnectorLog("fatal", "benchmark", "bench failed; refusing to start connector services", fields)
+					return errors.New(reason)
+				}
+				log.Printf("bench: continuing without strict bench gate: %s", benchErr)
 				fields := benchmarkLogFields(specs)
 				fields["error"] = benchErr
-				sendConnectorLog("fatal", "benchmark", "bench failed; refusing to start connector services", fields)
-				return errors.New(reason)
+				sendConnectorLog("warn", "benchmark", "benchmark failed but strict gate is disabled", fields)
+			} else {
+				sendConnectorLog("info", "benchmark", "benchmark completed", benchmarkLogFields(specs))
 			}
-			log.Printf("bench: continuing without strict bench gate: %s", benchErr)
-			fields := benchmarkLogFields(specs)
-			fields["error"] = benchErr
-			sendConnectorLog("warn", "benchmark", "benchmark failed but strict gate is disabled", fields)
-		} else {
-			sendConnectorLog("info", "benchmark", "benchmark completed", benchmarkLogFields(specs))
 		}
-	}
 
-	if !benchRequested {
-		sendConnectorLog("info", "benchmark", "benchmark skipped by backend policy", nil)
-	}
+		if !benchRequested {
+			sendConnectorLog("info", "benchmark", "benchmark skipped by backend policy", nil)
+		}
 
+		apiService.BenchmarkReady.Store(true)
+	}
+	if specs.ModelRunner == nil {
+		specs.ModelRunner = detectModelRunnerCapability(ctx, apiService.DockerService)
+	}
 	if err := apiService.SendSpecs(*specs); err != nil {
 		sendConnectorLog("error", "hardware-specs", fmt.Sprintf("send specs failed: %v", err), nil)
 		return fmt.Errorf("send specs: %w", err)
@@ -417,6 +441,9 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 		}
 	})
 
+	if benchmarkManaged {
+		startManaged(&wg, errCh, "benchmark scheduler", func() error { return runBenchmarkScheduler(ctx, &apiService) })
+	}
 	startManaged(&wg, errCh, "specs refresher", func() error {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()

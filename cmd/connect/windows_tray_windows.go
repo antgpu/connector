@@ -241,7 +241,7 @@ func maybeHandleWindowsTrayMode(opts runtimeOptions) (bool, error) {
 		serviceName: serviceName,
 		displayName: "Antgpu Connect",
 		stateDir:    stateDir,
-		showLogs:    true,
+		showLogs:    opts.ShowLogs,
 	}
 	return true, app.run()
 }

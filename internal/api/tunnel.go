@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mintyleaf/tunnel/pkg/configurer"
 	"github.com/sirupsen/logrus"
@@ -184,9 +185,13 @@ func (s APIService) FetchConnectionConfig(token string) (MachineEnrollConnectOut
 }
 
 func (s APIService) GetMachineConnectionConfig(force bool) (MachineConfigGetOutput, error) {
+	return s.GetMachineConnectionConfigContext(context.Background(), force)
+}
+
+func (s APIService) GetMachineConnectionConfigContext(ctx context.Context, force bool) (MachineConfigGetOutput, error) {
 	var output MachineConfigGetOutput
 
-	req, err := http.NewRequest(http.MethodGet, s.APIAddr+"/machines/config", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.APIAddr+"/machines/config", nil)
 	if err != nil {
 		return output, fmt.Errorf("creating http request: %w", err)
 	}
@@ -199,7 +204,7 @@ func (s APIService) GetMachineConnectionConfig(force bool) (MachineConfigGetOutp
 	}
 	req.URL.RawQuery = q.Encode()
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return output, fmt.Errorf("making http request: %w", err)
