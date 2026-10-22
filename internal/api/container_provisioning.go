@@ -19,6 +19,7 @@ type ProvisioningOperation struct {
 	Status          string `json:"status"`
 	Message         string `json:"message,omitempty"`
 	ContainerID     string `json:"container_id,omitempty"`
+	Finished        bool   `json:"finished"`
 	PullCurrent     int64  `json:"pull_current_bytes,omitempty"`
 	PullTotal       int64  `json:"pull_total_bytes,omitempty"`
 	PullLayer       string `json:"pull_layer,omitempty"`
@@ -73,7 +74,14 @@ func (m *ProvisioningManager) cancel(id string) (ProvisioningOperation, bool) {
 
 func (m *ProvisioningManager) put(op ProvisioningOperation) {
 	m.mu.Lock()
+	if current, ok := m.ops[op.ID]; ok && current.Status == "canceled" {
+		op.Status, op.Message = "canceled", current.Message
+		op.Finished = op.Finished || current.Finished
+	}
 	m.ops[op.ID] = op
+	if op.Finished {
+		delete(m.cancels, op.ID)
+	}
 	m.mu.Unlock()
 }
 
@@ -146,6 +154,8 @@ func (s APIService) ContainerCreateFromTemplateAsync(ctx context.Context, input 
 	go func() {
 		defer cancel()
 		if current, ok := manager.get(op.ID); ok && current.Status == "canceled" {
+			current.Finished = true
+			manager.put(current)
 			return
 		}
 		op.Status, op.Message, op.UpdatedAt = "pulling", "pulling image", time.Now().UTC().Format(time.RFC3339)
@@ -154,9 +164,13 @@ func (s APIService) ContainerCreateFromTemplateAsync(ctx context.Context, input 
 			manager.updatePull(op.ID, progress)
 		}, pkgdocker.LaunchOptions{RentID: strings.TrimSpace(input.RentID), StorageSafetyReserveBytes: input.StorageSafetyReserveBytes})
 		if current, ok := manager.get(op.ID); ok && current.Status == "canceled" {
+			current.ContainerID = result.ContainerID
+			current.Finished = true
+			manager.put(current)
 			return
 		}
 		op.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		op.Finished = true
 		if runErr != nil {
 			op.Status, op.Message = "failed", runErr.Error()
 		} else {
