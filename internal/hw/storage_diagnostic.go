@@ -18,8 +18,8 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
-// This small, immutable official Alpine image supplies only statfs. An opted-in
-// canary may download it once; admission/heartbeat measurements are unchanged.
+// This small, immutable official Alpine image supplies only statfs. It is shared
+// by Windows capacity reporting and opted-in storage diagnostics.
 const storageDiagnosticImage = "alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
 
 type StorageDiagnostic struct {
@@ -108,7 +108,7 @@ func probeStorageDiagnosticGuest(parent context.Context, cli *client.Client, all
 	created, err := cli.ContainerCreate(ctx, &container.Config{
 		Image: inspected.ID, User: "65534:65534", Entrypoint: []string{"/bin/sh"},
 		Cmd:    []string{"-ec", "stat -f -c '%S %b %f %a' /"},
-		Labels: map[string]string{"antgpu.helper": "storage-diagnostic"},
+		Labels: map[string]string{"antgpu.helper": "storage-probe"},
 	}, storageDiagnosticHostConfig(), nil, nil, "")
 	if err != nil {
 		out["error"] = "helper_create_failed"

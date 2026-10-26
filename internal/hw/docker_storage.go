@@ -73,13 +73,13 @@ func fetchDockerStorageInfo(includeCacheUsage bool) *DockerStorageInfo {
 	probePath := out.RootDir
 	out.Source = "docker_root_usage"
 	if runtime.GOOS == "windows" && strings.EqualFold(out.OSType, "linux") && strings.HasPrefix(out.RootDir, "/") {
-		if vhdx := dockerDesktopWSLDataPath(); vhdx != "" {
-			probePath = filepath.Dir(vhdx)
-			out.Source = "docker_desktop_wsl_vhdx_host_drive"
-		} else {
-			out.Error = "docker desktop WSL data path not found"
+		sample, err := windowsDockerStorageUsage(cli.DaemonHost(), info.ID, info.KernelVersion)
+		if err != nil {
+			out.Error = err.Error()
 			return out
 		}
+		out.TotalBytes, out.FreeBytes, out.UsedBytes = sample.TotalBytes, sample.FreeBytes, sample.UsedBytes
+		out.ObservedAt, out.Source = sample.ObservedAt, sample.Source
 	} else if runtime.GOOS == "windows" {
 		out.Source = "docker_root_windows_volume"
 	} else {
@@ -91,15 +91,16 @@ func fetchDockerStorageInfo(includeCacheUsage bool) *DockerStorageInfo {
 		return out
 	}
 
-	usage, err := psDisk.Usage(probePath)
-	if err != nil {
-		out.Error = fmt.Sprintf("docker storage usage for %s: %v", probePath, err)
-		return out
+	if out.TotalBytes == 0 {
+		usage, err := psDisk.Usage(probePath)
+		if err != nil {
+			out.Error = fmt.Sprintf("docker storage usage for %s: %v", probePath, err)
+			return out
+		}
+		out.TotalBytes = usage.Total
+		out.FreeBytes = usage.Free
+		out.UsedBytes = usage.Used
 	}
-
-	out.TotalBytes = usage.Total
-	out.FreeBytes = usage.Free
-	out.UsedBytes = usage.Used
 
 	warning, capabilityErr := pkgdocker.CheckStorageOptsSupport(ctx, cli)
 	switch {
