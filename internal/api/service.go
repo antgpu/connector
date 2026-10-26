@@ -35,17 +35,18 @@ type MachineAuthData struct {
 }
 
 type APIService struct {
-	APIAddr           string
-	MachineAuthData   MachineAuthData
-	DockerService     *internaldocker.Service
-	TunnelRuntime     *TunnelRuntime
-	Updater           *updater.Manager
-	OnConnectorRemove func(ConnectorRemoveInput)
-	StateDir          string
-	Provisioning      *ProvisioningManager
-	UpdatesDisabled   bool
-	WorkloadMutex     *sync.RWMutex
-	BenchmarkReady    *atomic.Bool
+	APIAddr            string
+	MachineAuthData    MachineAuthData
+	DockerService      *internaldocker.Service
+	TunnelRuntime      *TunnelRuntime
+	Updater            *updater.Manager
+	OnConnectorRemove  func(ConnectorRemoveInput)
+	StateDir           string
+	Provisioning       *ProvisioningManager
+	UpdatesDisabled    bool
+	WorkloadMutex      *sync.RWMutex
+	BenchmarkReady     *atomic.Bool
+	StorageReportState *atomic.Int32
 }
 
 func (s APIService) WebService() *web.Service {
@@ -388,7 +389,32 @@ func (s APIService) ReportHealth() error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("unexpected status code: %d: %s", resp.StatusCode, string(body))
 	}
+	if s.storageNeedsSpecsRefresh(payload.DockerStorage) {
+		// The existing backend merges heartbeat fields and can retain an
+		// omitted empty error or zero capacity. A full report clears old fields
+		// through the established hardware API, without a backend migration.
+		s.refreshSpecsAsync("storage telemetry recovered")
+	}
 	return nil
+}
+
+func storageReportState(storage *hw.DockerStorageInfo) int32 {
+	if storage == nil || storage.Error != "" || storage.TotalBytes == 0 || storage.FreeBytes > storage.TotalBytes {
+		return 0
+	}
+	if storage.FreeBytes == 0 {
+		return 2
+	}
+	return 1
+}
+
+func (s APIService) storageNeedsSpecsRefresh(storage *hw.DockerStorageInfo) bool {
+	if s.StorageReportState == nil {
+		return false
+	}
+	state := storageReportState(storage)
+	previous := s.StorageReportState.Swap(state)
+	return state != 0 && state != previous
 }
 
 type ConnectorStatusInput struct{}
@@ -518,6 +544,9 @@ func (s APIService) SendSpecs(specs hw.SystemSpecs) error {
 	if resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("unexpected status code: %d: %s", resp.StatusCode, string(body))
+	}
+	if s.StorageReportState != nil {
+		s.StorageReportState.Store(storageReportState(specs.DockerStorage))
 	}
 	return nil
 }

@@ -230,6 +230,9 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 
 	apiService.WorkloadMutex = &sync.RWMutex{}
 	apiService.BenchmarkReady = &atomic.Bool{}
+	if runtime.GOOS == "windows" {
+		apiService.StorageReportState = &atomic.Int32{}
+	}
 	connectorUpdater := updater.NewManager(updater.ManagerConfig{
 		APIAddr:      APIAddr,
 		MachineToken: apiService.MachineAuthData.MachineToken,
