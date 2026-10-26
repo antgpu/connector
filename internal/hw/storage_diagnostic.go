@@ -12,13 +12,15 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
-// Reuse the already installed, digest-pinned Windows isolation image. Diagnostics
-// never pull an image or change the admission/heartbeat storage measurement.
-const storageDiagnosticImage = "docker:29.5.2-dind@sha256:6b9cd914eb9c6b342c040a49a27a5eb3804453bae6ecc90f7ff96133595a95e8"
+// This small, immutable official Alpine image supplies only statfs. An opted-in
+// canary may download it once; admission/heartbeat measurements are unchanged.
+const storageDiagnosticImage = "alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
 
 type StorageDiagnostic struct {
 	ObservedAt time.Time      `json:"observed_at"`
@@ -43,7 +45,7 @@ func CollectStorageDiagnostic(ctx context.Context) StorageDiagnostic {
 			"kernel_version": info.KernelVersion, "operating_system": info.OperatingSystem,
 			"os_type": info.OSType, "docker_root": info.DockerRootDir, "driver_status": info.DriverStatus}
 		if info.OSType == "linux" {
-			out.Guest = probeStorageDiagnosticGuest(ctx, cli)
+			out.Guest = probeStorageDiagnosticGuest(ctx, cli, true)
 		} else {
 			out.Guest["error"] = "not_a_linux_engine"
 		}
@@ -70,11 +72,25 @@ func storageDiagnosticHostConfig() *container.HostConfig {
 	}
 }
 
-func probeStorageDiagnosticGuest(parent context.Context, cli *client.Client) map[string]any {
+func probeStorageDiagnosticGuest(parent context.Context, cli *client.Client, allowPull bool) map[string]any {
 	out := map[string]any{"scope": "container_root_filesystem"}
-	ctx, cancel := context.WithTimeout(parent, 8*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	inspected, err := cli.ImageInspect(ctx, storageDiagnosticImage)
+	if allowPull && errdefs.IsNotFound(err) {
+		pull, pullErr := cli.ImagePull(ctx, storageDiagnosticImage, image.PullOptions{})
+		if pullErr != nil {
+			out["error"] = "pinned_helper_pull_failed"
+			return out
+		}
+		_, pullErr = io.Copy(io.Discard, io.LimitReader(pull, 1<<20))
+		pull.Close()
+		if pullErr != nil || ctx.Err() != nil {
+			out["error"] = "pinned_helper_pull_incomplete"
+			return out
+		}
+		inspected, err = cli.ImageInspect(ctx, storageDiagnosticImage)
+	}
 	if err != nil {
 		out["error"] = "pinned_helper_not_cached"
 		return out

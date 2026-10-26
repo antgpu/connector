@@ -26,10 +26,11 @@ type diagnosticPath struct {
 	Free   uint64 `json:"free_bytes,omitempty"`
 }
 type diagnosticSettings struct {
-	Profile string         `json:"profile"`
-	File    string         `json:"file"`
-	Status  string         `json:"status"`
-	Values  map[string]any `json:"values,omitempty"`
+	Profile     string         `json:"profile"`
+	File        string         `json:"file"`
+	Status      string         `json:"status"`
+	Values      map[string]any `json:"values,omitempty"`
+	StorageKeys []string       `json:"storage_keys,omitempty"`
 }
 type diagnosticWindowsHost struct {
 	Identity      string               `json:"identity_category"`
@@ -182,8 +183,12 @@ func collectStorageDiagnosticHost(ctx context.Context) any {
 				} else {
 					entry.Values = map[string]any{}
 					for key, raw := range values {
+						lower := strings.ToLower(key)
+						if len(key) <= 128 && len(entry.StorageKeys) < 32 && (strings.Contains(lower, "disk") || strings.Contains(lower, "folder") || strings.Contains(lower, "wsl")) {
+							entry.StorageKeys = append(entry.StorageKeys, key)
+						}
 						switch strings.ToLower(key) {
-						case "datafolder", "diskimagelocation":
+						case "datafolder", "diskimagelocation", "wsldatapath", "wsldataroot", "wsldefaultdataroot", "wsldatafolder":
 							var path string
 							if json.Unmarshal(raw, &path) == nil && len(path) < 1024 {
 								if diagnosticLocalPath(path) {
@@ -200,6 +205,7 @@ func collectStorageDiagnosticHost(ctx context.Context) any {
 							}
 						}
 					}
+					sort.Strings(entry.StorageKeys)
 				}
 			}
 			out.Settings = append(out.Settings, entry)
@@ -226,6 +232,15 @@ func collectStorageDiagnosticHost(ctx context.Context) any {
 			base = strings.TrimPrefix(base, `\\?\`)
 			out.WSL = append(out.WSL, map[string]string{"profile": profile.alias, "distribution": name, "base_path": diagnosticRedactPath(base, profiles), "status": "registered"})
 			probeDiskLayouts("wsl_registry", base)
+			// The registered docker-desktop VHD can be the system disk. Probe
+			// only known sibling data layouts; do not infer their backing store
+			// from the system disk or recursively enumerate arbitrary files.
+			if diagnosticLocalPath(base) {
+				parent := filepath.Dir(base)
+				for _, relative := range []string{`data\ext4.vhdx`, `data\docker_data.vhdx`, `disk\docker_data.vhdx`, `docker_data.vhdx`, `DockerDesktopWSL\data\ext4.vhdx`} {
+					probe("wsl_sibling_data_vhdx", filepath.Join(parent, relative))
+				}
+			}
 		}
 		wsl.Close()
 	}

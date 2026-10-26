@@ -29,7 +29,7 @@ func runStorageDiagnostic(ctx context.Context, s *api.APIService) error {
 			busy, err := s.DockerService.HasRunningManagedContainers(check)
 			cancel()
 			if err == nil && !busy {
-				probe, cancel := context.WithTimeout(ctx, 20*time.Second)
+				probe, cancel := context.WithTimeout(ctx, 45*time.Second)
 				report := hw.CollectStorageDiagnostic(probe)
 				cancel()
 				s.WorkloadMutex.Unlock()

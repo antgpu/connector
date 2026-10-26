@@ -27,14 +27,16 @@ func TestStorageDiagnosticRejectsInvalidCounts(t *testing.T) {
 }
 
 func TestStorageDiagnosticHelperConstrainedAndRemoved(t *testing.T) {
-	for _, scenario := range []string{"success", "start_failure", "bad_counts", "wrong_digest", "uncached"} {
+	for _, scenario := range []string{"success", "start_failure", "bad_counts", "wrong_digest", "uncached", "pull"} {
 		t.Run(scenario, func(t *testing.T) {
 			created, removed := false, false
+			inspects, pulls := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case strings.Contains(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json"):
-					if scenario == "uncached" {
+					inspects++
+					if scenario == "uncached" || (scenario == "pull" && inspects == 1) {
 						http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
 						return
 					}
@@ -43,6 +45,12 @@ func TestStorageDiagnosticHelperConstrainedAndRemoved(t *testing.T) {
 						digest = "untrusted:latest@sha256:other"
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"Id": "sha256:" + strings.Repeat("a", 64), "RepoDigests": []string{digest}})
+				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/images/create"):
+					pulls++
+					if scenario != "pull" || r.URL.Query().Get("fromImage") != "docker.io/library/alpine" || !strings.Contains(r.URL.Query().Encode(), "14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce") {
+						t.Errorf("unexpected image pull: %s", r.URL.RawQuery)
+					}
+					_, _ = w.Write([]byte("{\"status\":\"downloaded\"}\n"))
 				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/containers/create"):
 					var body struct {
 						container.Config
@@ -86,18 +94,21 @@ func TestStorageDiagnosticHelperConstrainedAndRemoved(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer cli.Close()
-			got := probeStorageDiagnosticGuest(context.Background(), cli)
+			got := probeStorageDiagnosticGuest(context.Background(), cli, scenario == "pull")
 			if created != removed {
 				t.Fatalf("leaked probe: created=%t removed=%t", created, removed)
 			}
-			if scenario == "success" && (got["error"] != nil || got["available_bytes"] != uint64(20480)) {
+			if (scenario == "success" || scenario == "pull") && (got["error"] != nil || got["available_bytes"] != uint64(20480)) {
 				t.Fatalf("unexpected success result: %v", got)
 			}
-			if scenario != "success" && got["error"] == nil {
+			if scenario != "success" && scenario != "pull" && got["error"] == nil {
 				t.Fatalf("failure went unreported: %v", got)
 			}
 			if (scenario == "wrong_digest" || scenario == "uncached") && created {
 				t.Fatal("created a container without the cached pinned image")
+			}
+			if scenario == "pull" && (pulls != 1 || inspects != 2) {
+				t.Fatal("did not inspect the pinned artifact after downloading")
 			}
 		})
 	}
@@ -112,7 +123,7 @@ func TestStorageDiagnosticGuestIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cli.Close()
-	got := probeStorageDiagnosticGuest(context.Background(), cli)
+	got := probeStorageDiagnosticGuest(context.Background(), cli, false)
 	if got["error"] != nil || got["cleanup_error"] != nil || got["total_bytes"] == uint64(0) {
 		t.Fatalf("real guest probe failed: %v", got)
 	}
