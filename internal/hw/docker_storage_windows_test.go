@@ -40,7 +40,9 @@ func TestSelectDockerDataDiskRejectsAmbiguity(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := selectDockerDataDisk([]string{filepath.Join(root, "missing.vhdx"), first, strings.ToUpper(first)})
-	if err != nil || !strings.EqualFold(got, first) {
+	gotInfo, statErr := os.Stat(got)
+	wantInfo, wantErr := os.Stat(first)
+	if err != nil || statErr != nil || wantErr != nil || !os.SameFile(gotInfo, wantInfo) {
 		t.Fatalf("could not deduplicate existing data disk: %q %v", got, err)
 	}
 	if _, err := selectDockerDataDisk([]string{first, second}); err == nil {
