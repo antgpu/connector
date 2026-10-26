@@ -444,6 +444,7 @@ func run(ctx context.Context, opts runtimeOptions, requestShutdown func()) error
 	if benchmarkManaged {
 		startManaged(&wg, errCh, "benchmark scheduler", func() error { return runBenchmarkScheduler(ctx, &apiService) })
 	}
+	startManaged(&wg, errCh, "storage diagnostic", func() error { return runStorageDiagnostic(ctx, &apiService) })
 	startManaged(&wg, errCh, "specs refresher", func() error {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
