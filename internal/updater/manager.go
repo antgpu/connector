@@ -409,6 +409,14 @@ func (m *Manager) downloadAndCache(ctx context.Context, version string, item man
 	if err := securefs.PrivateDir(filepath.Dir(outPath)); err != nil {
 		return "", fmt.Errorf("create cache dir: %w", err)
 	}
+	// A previous Windows executable may remain locked. Reuse it only after
+	// checking its protected location and signed-manifest hash; replacing an
+	// already verified cache entry is unnecessary and can prevent rollback.
+	if info, err := os.Stat(outPath); err == nil && (runtime.GOOS == "windows" || info.Mode().Perm()&0o100 != 0) {
+		if verifyCachedArtifact(outPath, item.SHA256) == nil {
+			return outPath, nil
+		}
+	}
 
 	temp, err := os.CreateTemp(filepath.Dir(outPath), "artifact-*.tmp")
 	if err != nil {
