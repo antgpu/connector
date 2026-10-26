@@ -107,3 +107,25 @@ func TestDockerStorageCacheIsolatesDaemonChanges(t *testing.T) {
 		t.Fatalf("old daemon overwrote the measurement: %+v %v", sample, err)
 	}
 }
+
+func TestDockerStorageCacheRefreshesWithEarlyHeartbeat(t *testing.T) {
+	var cache dockerStorageCache
+	now := time.Now().UTC()
+	var calls atomic.Int32
+	first := func() (dockerStorageSample, error) {
+		calls.Add(1)
+		return dockerStorageSample{ObservedAt: now, Source: "first"}, nil
+	}
+	_, _ = cache.get("daemon", now, first)
+	_, _ = waitStorageSample(t, &cache, "daemon", now, first)
+	early := now.Add(time.Minute - 100*time.Millisecond)
+	refresh := func() (dockerStorageSample, error) {
+		calls.Add(1)
+		return dockerStorageSample{ObservedAt: early, Source: "refreshed"}, nil
+	}
+	_, _ = cache.get("daemon", early, refresh)
+	sample, err := waitStorageSample(t, &cache, "daemon", early, refresh)
+	if err != nil || sample.Source != "refreshed" || calls.Load() != 2 {
+		t.Fatalf("early heartbeat skipped refresh: %+v %v calls=%d", sample, err, calls.Load())
+	}
+}

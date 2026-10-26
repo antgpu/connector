@@ -50,7 +50,9 @@ func (c *dockerStorageCache) get(key string, now time.Time, probe func() (docker
 			c.running, c.err = false, err
 			if err == nil {
 				c.sample = sample
-				c.nextAttempt = now.Add(time.Minute)
+				// Refresh before the one-minute heartbeat boundary. A deadline
+				// equal to that interval can skip a cycle after small jitter.
+				c.nextAttempt = now.Add(30 * time.Second)
 			} else {
 				c.nextAttempt = now.Add(30 * time.Second)
 			}
